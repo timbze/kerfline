@@ -1,0 +1,5 @@
+/telegram-jailbee
+/bin/
+*.exe
+.env
+/tmp/

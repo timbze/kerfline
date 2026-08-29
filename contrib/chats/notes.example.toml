@@ -1,0 +1,14 @@
+# Copy to ~/.config/telegram-jailbee/chats/notes.toml
+# Fill telegram_chat_id from /chatid in that chat.
+
+name = "notes"
+telegram_chat_id = 0
+# Empty allowlist = anyone in the chat. Prefer explicit user ids.
+allowed_user_ids = []
+# Groups: true. Your private DM with the bot: false.
+require_mention = true
+workspace = "/home/you/kerfline-workspaces/notes"
+jailbee_container = "main"
+# Later: dedicated Gitea bot user invited only to this repo. Do not reuse host tea.
+# gitea_remote = "https://gitea.example.com/bot/notes"
+# tea_login = "notes-bot"

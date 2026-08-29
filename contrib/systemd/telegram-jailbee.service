@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram bot that runs Grok inside JailBee
+After=network-online.target incus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/telegram-jailbee
+Restart=on-failure
+RestartSec=3
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/bin
+EnvironmentFile=-%h/.config/telegram-jailbee/env
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,22 @@
+# Copy to ~/.config/telegram-jailbee/config.toml
+# Token lives in ~/.config/telegram-jailbee/env (BOT_TOKEN=...), not here.
+
+[telegram]
+# webhook is the default. If public_url is empty, the bot long-polls instead.
+mode = "webhook"
+listen = "127.0.0.1:8787"
+# HTTPS origin Telegram posts to (reverse proxy / tunnel). No trailing slash.
+# public_url = "https://bot.example.com"
+# Random string; also set TELEGRAM_WEBHOOK_SECRET in env if you prefer.
+secret_token = "change-me"
+path = "hook"
+# deleteWebhook + getUpdates until empty, then setWebhook.
+drain_on_start = true
+
+[grok]
+always_approve = true
+disallowed_tools = ["web_fetch"]
+timeout = "10m"
+
+[jailbee]
+binary = "jailbee"
