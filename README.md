@@ -1,6 +1,8 @@
-# telegram-jailbee
+# Kerfline
 
 A Go Telegram bot that maps **each chat to one git workspace**. Grok runs inside a [JailBee](https://github.com/VRTFinland/jailbee) container for that workspace, not on the host. SuperGrok login (no API key).
+
+The name is *kerf* (the slit a blade leaves) plus *line* (the wire). One narrow opening per chat.
 
 v1 is local git. Gitea `tea` is configured in chat files but not used yet — when it is, it must be a **dedicated Gitea user invited to that one repo**, never the host `tea` login.
 
@@ -8,9 +10,9 @@ v1 is local git. Gitea `tea` is configured in chat files but not used yet — wh
 
 | Path | Role |
 |---|---|
-| this repo | Go bot (host process) |
+| this repo | Go bot (host process), binary `kerfline` |
 | `~/kerfline-workspaces/notes` | first Grok workspace (JailBee container `main`) |
-| `~/.config/telegram-jailbee/` | token + per-chat config (not in git) |
+| `~/.config/kerfline/` | token + per-chat config (not in git) |
 
 ## Telegram
 
@@ -54,18 +56,18 @@ jailbee exec main -- grok -p "reply pong" --always-approve
 ### 3. Bot config
 
 ```bash
-mkdir -p ~/.config/telegram-jailbee/chats
-cp contrib/config.example.toml ~/.config/telegram-jailbee/config.toml
-cp contrib/chats/notes.example.toml ~/.config/telegram-jailbee/chats/notes.toml
-install -m 600 /dev/null ~/.config/telegram-jailbee/env
-echo 'BOT_TOKEN=…' >> ~/.config/telegram-jailbee/env
+mkdir -p ~/.config/kerfline/chats
+cp contrib/config.example.toml ~/.config/kerfline/config.toml
+cp contrib/chats/notes.example.toml ~/.config/kerfline/chats/notes.toml
+install -m 600 /dev/null ~/.config/kerfline/env
+echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 ```
 
 Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, set `require_mention = true`.
 
 ```bash
 make install
-systemctl --user enable --now telegram-jailbee
+systemctl --user enable --now kerfline
 ```
 
 Trigger: `/ask …` or `@bot …`. In a DM with `require_mention = false`, any text is a Grok turn.

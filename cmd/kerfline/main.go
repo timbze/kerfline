@@ -11,10 +11,10 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
-	"telegram-jailbee/internal/bot"
-	"telegram-jailbee/internal/config"
-	"telegram-jailbee/internal/runner"
-	"telegram-jailbee/internal/session"
+	"kerfline/internal/bot"
+	"kerfline/internal/config"
+	"kerfline/internal/runner"
+	"kerfline/internal/session"
 )
 
 func main() {

@@ -1,15 +1,15 @@
 [Unit]
-Description=Telegram bot that runs Grok inside JailBee
+Description=Kerfline — Telegram to a JailBee Grok workspace
 After=network-online.target incus.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/telegram-jailbee
+ExecStart=%h/.local/bin/kerfline
 Restart=on-failure
 RestartSec=3
 Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/bin
-EnvironmentFile=-%h/.config/telegram-jailbee/env
+EnvironmentFile=-%h/.config/kerfline/env
 
 [Install]
 WantedBy=default.target

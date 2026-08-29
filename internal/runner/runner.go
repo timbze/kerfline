@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"telegram-jailbee/internal/config"
+	"kerfline/internal/config"
 )
 
 type Result struct {

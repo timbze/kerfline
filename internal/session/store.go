@@ -17,13 +17,13 @@ type Store struct {
 
 func Path() string {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "telegram-jailbee", "sessions.json")
+		return filepath.Join(xdg, "kerfline", "sessions.json")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "sessions.json"
 	}
-	return filepath.Join(home, ".local", "state", "telegram-jailbee", "sessions.json")
+	return filepath.Join(home, ".local", "state", "kerfline", "sessions.json")
 }
 
 func Open(path string) (*Store, error) {
@@ -50,7 +50,7 @@ func (s *Store) ID(chatName string) (id string, resume bool) {
 	if existing, ok := s.ids[chatName]; ok {
 		return existing, true
 	}
-	id = uuid.NewSHA1(uuid.NameSpaceURL, []byte("telegram-jailbee:"+chatName)).String()
+	id = uuid.NewSHA1(uuid.NameSpaceURL, []byte("kerfline:"+chatName)).String()
 	return id, false
 }
 

@@ -70,13 +70,13 @@ type Chat struct {
 
 func DefaultDir() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "telegram-jailbee")
+		return filepath.Join(xdg, "kerfline")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".config", "telegram-jailbee")
+	return filepath.Join(home, ".config", "kerfline")
 }
 
 func Load(dir string) (*Config, error) {

@@ -12,9 +12,9 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 
-	"telegram-jailbee/internal/config"
-	"telegram-jailbee/internal/runner"
-	"telegram-jailbee/internal/session"
+	"kerfline/internal/config"
+	"kerfline/internal/runner"
+	"kerfline/internal/session"
 )
 
 const telegramMax = 3900

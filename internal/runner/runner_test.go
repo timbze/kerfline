@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"telegram-jailbee/internal/config"
+	"kerfline/internal/config"
 )
 
 func TestRunBuildsJailbeeExec(t *testing.T) {

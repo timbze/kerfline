@@ -1,4 +1,4 @@
-# Copy to ~/.config/telegram-jailbee/chats/notes.toml
+# Copy to ~/.config/kerfline/chats/notes.toml
 # Fill telegram_chat_id from /chatid in that chat.
 
 name = "notes"

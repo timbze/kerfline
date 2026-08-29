@@ -1,4 +1,4 @@
-module telegram-jailbee
+module kerfline
 
 go 1.24
 

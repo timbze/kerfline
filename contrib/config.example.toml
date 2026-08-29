@@ -1,5 +1,5 @@
-# Copy to ~/.config/telegram-jailbee/config.toml
-# Token lives in ~/.config/telegram-jailbee/env (BOT_TOKEN=...), not here.
+# Copy to ~/.config/kerfline/config.toml
+# Token lives in ~/.config/kerfline/env (BOT_TOKEN=...), not here.
 
 [telegram]
 # webhook is the default. If public_url is empty, the bot long-polls instead.
