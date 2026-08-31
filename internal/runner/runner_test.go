@@ -13,11 +13,12 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 	r := New()
 	var gotName string
 	var gotArgs []string
+	var gotCmd *exec.Cmd
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		gotName, gotArgs = name, args
-		cmd := exec.CommandContext(ctx, "true")
-		return cmd
+		gotCmd = exec.CommandContext(ctx, "true")
+		return gotCmd
 	}
 	cfg := &config.Config{
 		Grok: config.Grok{
@@ -27,8 +28,9 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 		},
 		Jailbee: config.Jailbee{Binary: "jailbee"},
 	}
+	ws := t.TempDir()
 	chat := config.Chat{
-		Workspace:        "/tmp/notes",
+		Workspace:        ws,
 		JailbeeContainer: "main",
 	}
 	if _, err := r.Run(context.Background(), cfg, chat, "ping", "11111111-1111-1111-1111-111111111111", true); err != nil {
@@ -37,10 +39,12 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 	if gotName != "/usr/bin/jailbee" {
 		t.Fatalf("bin %s", gotName)
 	}
+	if gotCmd.Dir != ws {
+		t.Fatalf("dir %s", gotCmd.Dir)
+	}
 	joined := strings.Join(gotArgs, " ")
 	for _, want := range []string{
-		"-c /tmp/notes/.jailbee/config.yaml",
-		"exec main --",
+		"exec -c " + ws + "/.jailbee/config.yaml main --",
 		"grok -p ping",
 		"--always-approve",
 		"--disallowed-tools web_fetch",

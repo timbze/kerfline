@@ -49,8 +49,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	}
 
 	args := []string{
+		"exec",
 		"-c", chat.JailbeeConfig(),
-		"exec", chat.JailbeeContainer,
+		chat.JailbeeContainer,
 		"--",
 		"grok", "-p", prompt,
 		"--output-format", "plain",
@@ -71,6 +72,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	args = append(args, cfg.Grok.ExtraArgs...)
 
 	cmd := r.Command(ctx, path, args...)
+	cmd.Dir = chat.Workspace
 	cmd.Env = filteredEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
