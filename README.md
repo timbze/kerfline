@@ -79,3 +79,9 @@ New workspace repo with `.jailbee/`, `jailbee new`, then a new `chats/foo.toml`.
 ## Later: Gitea / tea
 
 Do **not** mount `~/.config/tea`. Create a Gitea user that can only see that one repo, `tea login` inside the container, add `gitea.example.com:443` to JailBee strict egress, fill `gitea_remote` / `tea_login` on the chat file.
+
+## License
+
+Kerfline is MIT. See [`LICENSE`](LICENSE).
+
+[JailBee](https://github.com/VRTFinland/jailbee) is a separate GPL-3.0-or-later runtime; this repo does not include it.
