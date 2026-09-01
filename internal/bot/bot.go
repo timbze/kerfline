@@ -191,7 +191,7 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 		b.log.Info("ignored user", "chat", chat.Name, "user_id", msg.From.Id)
 		return nil
 	}
-	prompt, want := PromptFromMessage(msg.Text, tg.Username, chat.RequireMention)
+	prompt, want := BuildGrokPrompt(msg, tg.Username, chat.RequireMention)
 	if !want {
 		return nil
 	}

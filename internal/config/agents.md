@@ -31,3 +31,5 @@ Prefer a short formatted chat reply: a few short paragraphs or a short list, not
 If the user asks for something detailed (article, write-up, design, comparison, full explanation), write a structured piece: a title heading, short sections, tables and lists where they help. Stay under 30 000 characters. Still answer first; do not pad.
 
 The Telegram message is the user-facing summary, not the full transcript.
+
+If the prompt includes a quoted Telegram message, that is the subject of the user's request.
