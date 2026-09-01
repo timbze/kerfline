@@ -222,6 +222,12 @@ func TestLoadRulesMissingUsesDefault(t *testing.T) {
 	if cfg.Rules != want {
 		t.Fatalf("Rules = %q, want default", cfg.Rules)
 	}
+	if !strings.Contains(want, "rich message") || !strings.Contains(want, "GitHub-flavored Markdown") {
+		t.Fatalf("DefaultRules should tell Grok to write rich Markdown, got %q", want)
+	}
+	if strings.Contains(want, "does not render Markdown") {
+		t.Fatal("DefaultRules must not claim Telegram is plain text")
+	}
 }
 
 func TestLoadRulesFileReplacesDefault(t *testing.T) {

@@ -41,14 +41,46 @@ func TestReplyOpts(t *testing.T) {
 		{MessageThreadId: 0, IsTopicMessage: true},
 	}
 	for _, msg := range omit {
-		opts := replyOpts(&msg)
-		if opts.MessageThreadId != 0 {
-			t.Fatalf("should omit thread on %+v, got %d", msg, opts.MessageThreadId)
+		if id := topicThreadID(&msg); id != 0 {
+			t.Fatalf("should omit thread on %+v, got %d", msg, id)
+		}
+		if opts := replyOpts(&msg); opts.MessageThreadId != 0 {
+			t.Fatalf("plain should omit thread on %+v, got %d", msg, opts.MessageThreadId)
+		}
+		if opts := richReplyOpts(&msg); opts.MessageThreadId != 0 {
+			t.Fatalf("rich should omit thread on %+v, got %d", msg, opts.MessageThreadId)
 		}
 	}
-	opts := replyOpts(&gotgbot.Message{MessageThreadId: 3, IsTopicMessage: true})
-	if opts.MessageThreadId != 3 {
-		t.Fatalf("user topic: got %d", opts.MessageThreadId)
+	topic := &gotgbot.Message{MessageThreadId: 3, IsTopicMessage: true}
+	if topicThreadID(topic) != 3 {
+		t.Fatalf("user topic: got %d", topicThreadID(topic))
+	}
+	if opts := replyOpts(topic); opts.MessageThreadId != 3 {
+		t.Fatalf("plain user topic: got %d", opts.MessageThreadId)
+	}
+	if opts := richReplyOpts(topic); opts.MessageThreadId != 3 {
+		t.Fatalf("rich user topic: got %d", opts.MessageThreadId)
+	}
+}
+
+func TestSplitTelegram(t *testing.T) {
+	if got := splitTelegram("  hi  ", 10); len(got) != 1 || got[0] != "hi" {
+		t.Fatalf("short: %q", got)
+	}
+	long := strings.Repeat("a\n", 20)
+	parts := splitTelegram(long, 10)
+	if len(parts) < 2 {
+		t.Fatalf("expected split, got %d parts", len(parts))
+	}
+	for _, p := range parts {
+		if len(p) > 10 {
+			t.Fatalf("chunk too long: %d", len(p))
+		}
+	}
+	joined := strings.ReplaceAll(strings.Join(parts, ""), "\n", "")
+	want := strings.Repeat("a", 20)
+	if joined != want {
+		t.Fatalf("joined %q want %q", joined, want)
 	}
 }
 

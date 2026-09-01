@@ -63,7 +63,7 @@ install -m 600 /dev/null ~/.config/kerfline/env
 echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 ```
 
-Built-in Grok rules (`internal/config/agents.md`) apply to every chat: Telegram gets plain text, keep replies short. If `~/.config/kerfline/AGENTS.md` exists and is non-empty, it replaces the built-in text. Restart the bot after editing it.
+Built-in Grok rules (`internal/config/agents.md`) apply to every chat: replies are Telegram rich Markdown (short by default; a longer article if asked). If `~/.config/kerfline/AGENTS.md` exists and is non-empty, it replaces the built-in text. Restart the bot after editing it.
 
 Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, set `require_mention = true`. In a forum group, `/ask` replies stay in the topic they were written in; `/chatid` prints `topic_id` when you run it inside a topic.
 

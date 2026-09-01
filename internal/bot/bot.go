@@ -18,8 +18,11 @@ import (
 )
 
 const (
-	telegramMax   = 3900
-	typingRefresh = 4 * time.Second
+	// telegramRichMax is under the 32768-character rich-message limit (counted in bytes here).
+	telegramRichMax = 30000
+	// telegramPlainMax is under the 4096-character sendMessage limit, used only as fallback.
+	telegramPlainMax = 3900
+	typingRefresh    = 4 * time.Second
 )
 
 type Bot struct {
@@ -216,7 +219,7 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 		reply = "(empty reply)"
 	}
 	b.log.Info("grok done", "chat", chat.Name, "duration", res.Duration, "out_chars", len(reply))
-	return replyChunks(tg, msg, reply)
+	return b.replyChunks(tg, msg, reply)
 }
 
 func formatChatIDReply(msg *gotgbot.Message) string {
@@ -227,10 +230,25 @@ func formatChatIDReply(msg *gotgbot.Message) string {
 	return text
 }
 
+func topicThreadID(msg *gotgbot.Message) int64 {
+	if msg != nil && msg.IsTopicMessage && msg.MessageThreadId != 0 && msg.MessageThreadId != 1 {
+		return msg.MessageThreadId
+	}
+	return 0
+}
+
 func replyOpts(msg *gotgbot.Message) *gotgbot.SendMessageOpts {
 	opts := &gotgbot.SendMessageOpts{}
-	if msg != nil && msg.IsTopicMessage && msg.MessageThreadId != 0 && msg.MessageThreadId != 1 {
-		opts.MessageThreadId = msg.MessageThreadId
+	if id := topicThreadID(msg); id != 0 {
+		opts.MessageThreadId = id
+	}
+	return opts
+}
+
+func richReplyOpts(msg *gotgbot.Message) *gotgbot.SendRichMessageOpts {
+	opts := &gotgbot.SendRichMessageOpts{}
+	if id := topicThreadID(msg); id != 0 {
+		opts.MessageThreadId = id
 	}
 	return opts
 }
@@ -265,26 +283,37 @@ func typingLoop(ctx context.Context, send func(), interval time.Duration) {
 	}
 }
 
-func replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) error {
-	opts := replyOpts(msg)
-	for _, chunk := range splitTelegram(text) {
-		if _, err := msg.Reply(tg, chunk, opts); err != nil {
-			return err
+func (b *Bot) replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) error {
+	richOpts := richReplyOpts(msg)
+	plainOpts := replyOpts(msg)
+	for _, chunk := range splitTelegram(text, telegramRichMax) {
+		_, err := msg.ReplyRichMessage(tg, gotgbot.InputRichMessage{Markdown: chunk}, richOpts)
+		if err == nil {
+			continue
+		}
+		b.log.Error("rich reply failed; sending plain", "err", err, "chars", len(chunk))
+		for _, plain := range splitTelegram(chunk, telegramPlainMax) {
+			if _, err := msg.Reply(tg, plain, plainOpts); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func splitTelegram(s string) []string {
+func splitTelegram(s string, max int) []string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return []string{s}
 	}
+	if max <= 0 {
+		max = telegramPlainMax
+	}
 	var parts []string
-	for len(s) > telegramMax {
-		cut := strings.LastIndex(s[:telegramMax], "\n")
-		if cut < telegramMax/2 {
-			cut = telegramMax
+	for len(s) > max {
+		cut := strings.LastIndex(s[:max], "\n")
+		if cut < max/2 {
+			cut = max
 		}
 		parts = append(parts, s[:cut])
 		s = strings.TrimSpace(s[cut:])
