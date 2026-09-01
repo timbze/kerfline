@@ -17,7 +17,10 @@ import (
 	"kerfline/internal/session"
 )
 
-const telegramMax = 3900
+const (
+	telegramMax   = 3900
+	typingRefresh = 4 * time.Second
+)
 
 type Bot struct {
 	cfg     *config.Config
@@ -195,7 +198,8 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 		attrs = append(attrs, "topic_id", msg.MessageThreadId)
 	}
 	b.log.Info("grok turn", attrs...)
-	_, _ = tg.SendChatAction(msg.Chat.Id, "typing", chatActionOpts(msg))
+	stopTyping := keepTyping(tg, msg)
+	defer stopTyping()
 
 	sessionID, resume := b.sess.ID(chat.Name)
 	res, err := b.runner.Run(context.Background(), b.cfg, chat, prompt, sessionID, resume)
@@ -236,6 +240,29 @@ func chatActionOpts(msg *gotgbot.Message) *gotgbot.SendChatActionOpts {
 		return nil
 	}
 	return &gotgbot.SendChatActionOpts{MessageThreadId: msg.MessageThreadId}
+}
+
+// keepTyping refreshes sendChatAction until stop; Telegram drops typing after ~5s.
+func keepTyping(tg *gotgbot.Bot, msg *gotgbot.Message) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	go typingLoop(ctx, func() {
+		_, _ = tg.SendChatAction(msg.Chat.Id, "typing", chatActionOpts(msg))
+	}, typingRefresh)
+	return cancel
+}
+
+func typingLoop(ctx context.Context, send func(), interval time.Duration) {
+	send()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			send()
+		}
+	}
 }
 
 func replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) error {

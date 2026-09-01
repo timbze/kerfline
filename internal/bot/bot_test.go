@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -61,5 +63,37 @@ func TestChatActionOpts(t *testing.T) {
 	opts = chatActionOpts(&gotgbot.Message{MessageThreadId: 3})
 	if opts == nil || opts.MessageThreadId != 3 {
 		t.Fatalf("typing topic 3: %+v", opts)
+	}
+}
+
+func TestTypingLoopSendsUntilCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	sends := make(chan struct{}, 8)
+	go typingLoop(ctx, func() { sends <- struct{}{} }, 20*time.Millisecond)
+
+	select {
+	case <-sends:
+	case <-time.After(time.Second):
+		t.Fatal("expected immediate typing send")
+	}
+	select {
+	case <-sends:
+	case <-time.After(time.Second):
+		t.Fatal("expected typing refresh before 5s expiry")
+	}
+	cancel()
+
+	deadline := time.After(80 * time.Millisecond)
+	extra := 0
+	for {
+		select {
+		case <-sends:
+			extra++
+		case <-deadline:
+			if extra > 1 {
+				t.Fatalf("kept sending after cancel: extra=%d", extra)
+			}
+			return
+		}
 	}
 }
