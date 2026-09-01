@@ -152,14 +152,15 @@ func (b *Bot) idle(ctx context.Context) error {
 }
 
 func (b *Bot) onStart(tg *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
 	text := "I only answer in allowlisted chats, with /ask or an @mention (unless that chat is a DM).\nUse /chatid to print this chat's id for config."
-	_, err := ctx.EffectiveMessage.Reply(tg, text, nil)
+	_, err := msg.Reply(tg, text, replyOpts(msg))
 	return err
 }
 
 func (b *Bot) onChatID(tg *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	_, err := msg.Reply(tg, fmt.Sprintf("chat_id = %d\nuser_id = %d", msg.Chat.Id, msg.From.Id), nil)
+	_, err := msg.Reply(tg, formatChatIDReply(msg), replyOpts(msg))
 	return err
 }
 
@@ -168,9 +169,16 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 	if msg == nil || msg.From == nil {
 		return nil
 	}
-	chat, ok := b.cfg.ChatByID(msg.Chat.Id)
-	if !ok {
+	chat, kind := b.cfg.LookupTelegram(msg.Chat.Id, msg.MessageThreadId)
+	switch kind {
+	case config.TelegramUnknownChat:
 		b.log.Info("ignored unknown chat", "chat_id", msg.Chat.Id, "user_id", msg.From.Id)
+		return nil
+	case config.TelegramIgnoredTopic:
+		b.log.Info("ignored topic",
+			"chat_id", msg.Chat.Id,
+			"topic_id", msg.MessageThreadId,
+			"user_id", msg.From.Id)
 		return nil
 	}
 	if !chat.AllowsUser(msg.From.Id) {
@@ -182,14 +190,18 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	b.log.Info("grok turn", "chat", chat.Name, "user_id", msg.From.Id, "chars", len(prompt))
-	_, _ = tg.SendChatAction(msg.Chat.Id, "typing", nil)
+	attrs := []any{"chat", chat.Name, "user_id", msg.From.Id, "chars", len(prompt)}
+	if msg.MessageThreadId != 0 {
+		attrs = append(attrs, "topic_id", msg.MessageThreadId)
+	}
+	b.log.Info("grok turn", attrs...)
+	_, _ = tg.SendChatAction(msg.Chat.Id, "typing", chatActionOpts(msg))
 
 	sessionID, resume := b.sess.ID(chat.Name)
 	res, err := b.runner.Run(context.Background(), b.cfg, chat, prompt, sessionID, resume)
 	if err != nil {
 		b.log.Error("grok failed", "chat", chat.Name, "err", err, "duration", res.Duration)
-		_, sendErr := msg.Reply(tg, "Grok failed: "+err.Error(), nil)
+		_, sendErr := msg.Reply(tg, "Grok failed: "+err.Error(), replyOpts(msg))
 		return sendErr
 	}
 	if err := b.sess.Remember(chat.Name, sessionID); err != nil {
@@ -203,9 +215,33 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 	return replyChunks(tg, msg, reply)
 }
 
+func formatChatIDReply(msg *gotgbot.Message) string {
+	text := fmt.Sprintf("chat_id = %d\nuser_id = %d", msg.Chat.Id, msg.From.Id)
+	if msg.MessageThreadId != 0 {
+		text += fmt.Sprintf("\ntopic_id = %d", msg.MessageThreadId)
+	}
+	return text
+}
+
+func replyOpts(msg *gotgbot.Message) *gotgbot.SendMessageOpts {
+	opts := &gotgbot.SendMessageOpts{}
+	if msg != nil && msg.IsTopicMessage && msg.MessageThreadId != 0 && msg.MessageThreadId != 1 {
+		opts.MessageThreadId = msg.MessageThreadId
+	}
+	return opts
+}
+
+func chatActionOpts(msg *gotgbot.Message) *gotgbot.SendChatActionOpts {
+	if msg == nil || msg.MessageThreadId == 0 {
+		return nil
+	}
+	return &gotgbot.SendChatActionOpts{MessageThreadId: msg.MessageThreadId}
+}
+
 func replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) error {
+	opts := replyOpts(msg)
 	for _, chunk := range splitTelegram(text) {
-		if _, err := msg.Reply(tg, chunk, nil); err != nil {
+		if _, err := msg.Reply(tg, chunk, opts); err != nil {
 			return err
 		}
 	}

@@ -3,6 +3,9 @@
 
 name = "notes"
 telegram_chat_id = 0
+# Optional. 0 or omitted = whole chat. Set to the topic_id from /chatid
+# to handle only that forum topic.
+# telegram_topic_id = 0
 # Empty allowlist = anyone in the chat. Prefer explicit user ids.
 allowed_user_ids = []
 # Groups: true. Your private DM with the bot: false.

@@ -60,12 +60,27 @@ type Jailbee struct {
 type Chat struct {
 	Name             string  `toml:"name"`
 	TelegramChatID   int64   `toml:"telegram_chat_id"`
+	TelegramTopicID  int64   `toml:"telegram_topic_id"` // 0 = whole chat
 	AllowedUserIDs   []int64 `toml:"allowed_user_ids"`
 	RequireMention   bool    `toml:"require_mention"`
 	Workspace        string  `toml:"workspace"`
 	JailbeeContainer string  `toml:"jailbee_container"`
 	GiteaRemote      string  `toml:"gitea_remote"`
 	TeaLogin         string  `toml:"tea_login"`
+}
+
+type TelegramKind int
+
+const (
+	TelegramUnknownChat TelegramKind = iota // no Chat with this telegram_chat_id
+	TelegramIgnoredTopic                    // some Chat has this chat_id; none matched thread
+	TelegramExact                           // TelegramTopicID == threadID && threadID != 0
+	TelegramCatchAll                        // TelegramTopicID == 0
+)
+
+type tgKey struct {
+	chatID  int64
+	topicID int64
 }
 
 func DefaultDir() string {
@@ -131,7 +146,7 @@ func loadChats(cfg *Config, dir string) error {
 		}
 		return err
 	}
-	seenIDs := map[int64]string{}
+	seenIDs := map[tgKey]string{}
 	seenNames := map[string]struct{}{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") {
@@ -155,17 +170,21 @@ func loadChats(cfg *Config, dir string) error {
 		if chat.Workspace == "" {
 			return fmt.Errorf("%s: workspace is required", path)
 		}
+		if chat.TelegramTopicID < 0 {
+			return fmt.Errorf("%s: telegram_topic_id must be >= 0", path)
+		}
 		if chat.TelegramChatID == 0 {
 			// Placeholder until /chatid is pasted in. Skip, don't fail startup.
 			continue
 		}
-		if prev, ok := seenIDs[chat.TelegramChatID]; ok {
-			return fmt.Errorf("duplicate telegram_chat_id %d (%s and %s)", chat.TelegramChatID, prev, chat.Name)
+		key := tgKey{chat.TelegramChatID, chat.TelegramTopicID}
+		if prev, ok := seenIDs[key]; ok {
+			return fmt.Errorf("duplicate telegram_chat_id %d topic_id %d (%s and %s)", chat.TelegramChatID, chat.TelegramTopicID, prev, chat.Name)
 		}
 		if _, ok := seenNames[chat.Name]; ok {
 			return fmt.Errorf("duplicate chat name %q", chat.Name)
 		}
-		seenIDs[chat.TelegramChatID] = chat.Name
+		seenIDs[key] = chat.Name
 		seenNames[chat.Name] = struct{}{}
 		cfg.Chats = append(cfg.Chats, chat)
 	}
@@ -192,13 +211,30 @@ func (c *Config) UseWebhook() bool {
 	return c.Telegram.Mode == ModeWebhook && c.Telegram.PublicURL != ""
 }
 
-func (c *Config) ChatByID(id int64) (Chat, bool) {
+func (c *Config) LookupTelegram(chatID, threadID int64) (Chat, TelegramKind) {
+	var catchAll Chat
+	haveCatchAll := false
+	sawChatID := false
 	for _, ch := range c.Chats {
-		if ch.TelegramChatID == id {
-			return ch, true
+		if ch.TelegramChatID != chatID {
+			continue
+		}
+		sawChatID = true
+		if threadID != 0 && ch.TelegramTopicID == threadID {
+			return ch, TelegramExact
+		}
+		if ch.TelegramTopicID == 0 {
+			catchAll = ch
+			haveCatchAll = true
 		}
 	}
-	return Chat{}, false
+	if haveCatchAll {
+		return catchAll, TelegramCatchAll
+	}
+	if sawChatID {
+		return Chat{}, TelegramIgnoredTopic
+	}
+	return Chat{}, TelegramUnknownChat
 }
 
 func (ch Chat) AllowsUser(userID int64) bool {

@@ -63,7 +63,7 @@ install -m 600 /dev/null ~/.config/kerfline/env
 echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 ```
 
-Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, set `require_mention = true`.
+Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, set `require_mention = true`. In a forum group, `/ask` replies stay in the topic they were written in; `/chatid` prints `topic_id` when you run it inside a topic.
 
 ```bash
 make install
@@ -75,6 +75,8 @@ Trigger: `/ask …` or `@bot …`. In a DM with `require_mention = false`, any t
 ## Adding a chat
 
 New workspace repo with `.jailbee/`, `jailbee new`, then a new `chats/foo.toml`. Same binary.
+
+To bind only one forum topic, set `telegram_topic_id` to the id from `/chatid` in that topic. Other topics in the group are ignored unless another chat file covers them. You can have a catch-all file (no `telegram_topic_id`) plus topic-specific files for the same group: the matching topic file wins, including its allowlist and workspace. Do not run two files that share `telegram_chat_id` against an older Kerfline binary.
 
 ## Later: Gitea / tea
 

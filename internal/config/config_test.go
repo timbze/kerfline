@@ -57,9 +57,9 @@ tea_login = "notes-bot"
 	if !cfg.Telegram.ShouldDrain() {
 		t.Fatal("drain on start should default true")
 	}
-	ch, ok := cfg.ChatByID(-1001)
-	if !ok {
-		t.Fatal("missing chat")
+	ch, kind := cfg.LookupTelegram(-1001, 0)
+	if kind != TelegramCatchAll {
+		t.Fatalf("kind = %d, want catch-all", kind)
 	}
 	if !ch.AllowsUser(42) || ch.AllowsUser(7) {
 		t.Fatal("allowlist")
@@ -108,6 +108,22 @@ mode = "poll"`,
 	}
 }
 
+func pollTree(t *testing.T, chats map[string]string) *Config {
+	t.Helper()
+	files := map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"`,
+	}
+	for name, body := range chats {
+		files["chats/"+name] = body
+	}
+	cfg, err := Load(writeTree(t, files))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
 func TestDuplicateChatID(t *testing.T) {
 	dir := writeTree(t, map[string]string{
 		"config.toml": `[telegram]
@@ -117,5 +133,89 @@ mode = "poll"`,
 	})
 	if _, err := Load(dir); err == nil {
 		t.Fatal("expected duplicate id error")
+	}
+}
+
+func TestTwoTopicsSameGroup(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"ops.toml": "name = \"ops\"\ntelegram_chat_id = -1001\ntelegram_topic_id = 3\nworkspace = \"/ops\"\n",
+		"dev.toml": "name = \"dev\"\ntelegram_chat_id = -1001\ntelegram_topic_id = 5\nworkspace = \"/dev\"\n",
+	})
+	if len(cfg.Chats) != 2 {
+		t.Fatalf("got %d chats", len(cfg.Chats))
+	}
+	ch, kind := cfg.LookupTelegram(-1001, 3)
+	if kind != TelegramExact || ch.Name != "ops" {
+		t.Fatalf("topic 3: %+v kind %d", ch, kind)
+	}
+	ch, kind = cfg.LookupTelegram(-1001, 5)
+	if kind != TelegramExact || ch.Name != "dev" {
+		t.Fatalf("topic 5: %+v kind %d", ch, kind)
+	}
+}
+
+func TestDuplicateTopicPairDifferentNames(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"`,
+		"chats/a.toml": "name = \"a\"\ntelegram_chat_id = -1001\ntelegram_topic_id = 3\nworkspace = \"/a\"\n",
+		"chats/b.toml": "name = \"b\"\ntelegram_chat_id = -1001\ntelegram_topic_id = 3\nworkspace = \"/b\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected duplicate pair error")
+	}
+}
+
+func TestCatchAllPlusTopic(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"notes.toml":     "name = \"notes\"\ntelegram_chat_id = -1001\nworkspace = \"/notes\"\n",
+		"notes-ops.toml": "name = \"notes-ops\"\ntelegram_chat_id = -1001\ntelegram_topic_id = 3\nworkspace = \"/ops\"\n",
+	})
+	ch, kind := cfg.LookupTelegram(-1001, 3)
+	if kind != TelegramExact || ch.Name != "notes-ops" {
+		t.Fatalf("thread 3: %+v kind %d", ch, kind)
+	}
+	ch, kind = cfg.LookupTelegram(-1001, 9)
+	if kind != TelegramCatchAll || ch.Name != "notes" {
+		t.Fatalf("thread 9: %+v kind %d", ch, kind)
+	}
+	ch, kind = cfg.LookupTelegram(-1001, 0)
+	if kind != TelegramCatchAll || ch.Name != "notes" {
+		t.Fatalf("thread 0: %+v kind %d", ch, kind)
+	}
+}
+
+func TestTopicOnlyIgnoredTopic(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"ops.toml": "name = \"ops\"\ntelegram_chat_id = -1001\ntelegram_topic_id = 5\nworkspace = \"/ops\"\n",
+	})
+	_, kind := cfg.LookupTelegram(-1001, 3)
+	if kind != TelegramIgnoredTopic {
+		t.Fatalf("thread 3 kind = %d, want ignored topic", kind)
+	}
+	ch, kind := cfg.LookupTelegram(-1001, 5)
+	if kind != TelegramExact || ch.Name != "ops" {
+		t.Fatalf("thread 5: %+v kind %d", ch, kind)
+	}
+}
+
+func TestNegativeTopicID(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"`,
+		"chats/a.toml": "telegram_chat_id = -1001\ntelegram_topic_id = -1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected negative topic_id error")
+	}
+}
+
+func TestUnknownChat(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	_, kind := cfg.LookupTelegram(99, 0)
+	if kind != TelegramUnknownChat {
+		t.Fatalf("kind = %d, want unknown chat", kind)
 	}
 }
