@@ -33,6 +33,7 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 		Workspace:        ws,
 		JailbeeContainer: "main",
 	}
+	cfg.Rules = "Keep it short."
 	if _, err := r.Run(context.Background(), cfg, chat, "ping", "11111111-1111-1111-1111-111111111111", true); err != nil {
 		t.Fatal(err)
 	}
@@ -49,9 +50,29 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 		"--always-approve",
 		"--disallowed-tools web_fetch",
 		"-r 11111111-1111-1111-1111-111111111111",
+		"--rules Keep it short.",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
+	}
+}
+
+func TestRunOmitsRulesWhenEmpty(t *testing.T) {
+	r := New()
+	var gotArgs []string
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	if _, err := r.Run(context.Background(), cfg, chat, "ping", "", false); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	if strings.Contains(joined, "--rules") {
+		t.Fatalf("unexpected --rules in %q", joined)
 	}
 }

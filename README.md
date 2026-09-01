@@ -12,7 +12,7 @@ v1 is local git. Gitea `tea` is configured in chat files but not used yet — wh
 |---|---|
 | this repo | Go bot (host process), binary `kerfline` |
 | `~/kerfline-workspaces/notes` | first Grok workspace (JailBee container `main`) |
-| `~/.config/kerfline/` | token + per-chat config (not in git) |
+| `~/.config/kerfline/` | token, per-chat config, optional `AGENTS.md` override (not in git) |
 
 ## Telegram
 
@@ -62,6 +62,8 @@ cp contrib/chats/notes.example.toml ~/.config/kerfline/chats/notes.toml
 install -m 600 /dev/null ~/.config/kerfline/env
 echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 ```
+
+Built-in Grok rules (`internal/config/agents.md`) apply to every chat: Telegram gets plain text, keep replies short. If `~/.config/kerfline/AGENTS.md` exists and is non-empty, it replaces the built-in text. Restart the bot after editing it.
 
 Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, set `require_mention = true`. In a forum group, `/ask` replies stay in the topic they were written in; `/chatid` prints `topic_id` when you run it inside a topic.
 

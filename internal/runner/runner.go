@@ -70,6 +70,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 		}
 	}
 	args = append(args, cfg.Grok.ExtraArgs...)
+	if cfg.Rules != "" {
+		args = append(args, "--rules", cfg.Rules)
+	}
 
 	cmd := r.Command(ctx, path, args...)
 	cmd.Dir = chat.Workspace

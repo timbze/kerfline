@@ -1,5 +1,6 @@
 # Copy to ~/.config/kerfline/config.toml
 # Token lives in ~/.config/kerfline/env (BOT_TOKEN=...), not here.
+# Built-in Telegram rules apply unless AGENTS.md in this directory replaces them.
 
 [telegram]
 # webhook is the default. If public_url is empty, the bot long-polls instead.

@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 )
+
+// DefaultRules is compiled into the binary and used when AGENTS.md is absent.
+//
+//go:embed agents.md
+var DefaultRules string
 
 const (
 	ModeWebhook = "webhook"
@@ -20,6 +26,8 @@ type Config struct {
 	Jailbee  Jailbee  `toml:"jailbee"`
 	Chats    []Chat   `toml:"-"`
 	Dir      string   `toml:"-"`
+	// Rules is passed to grok --rules: AGENTS.md if present, otherwise DefaultRules.
+	Rules string `toml:"-"`
 }
 
 type Telegram struct {
@@ -111,10 +119,29 @@ func Load(dir string) (*Config, error) {
 	if err := loadChats(cfg, filepath.Join(dir, "chats")); err != nil {
 		return nil, err
 	}
+	if err := loadRules(cfg); err != nil {
+		return nil, err
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func loadRules(cfg *Config) error {
+	cfg.Rules = strings.TrimSpace(DefaultRules)
+	path := filepath.Join(cfg.Dir, "AGENTS.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if text := strings.TrimSpace(string(raw)); text != "" {
+		cfg.Rules = text
+	}
+	return nil
 }
 
 func applyDefaults(cfg *Config) {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -207,6 +208,51 @@ mode = "poll"`,
 	})
 	if _, err := Load(dir); err == nil {
 		t.Fatal("expected negative topic_id error")
+	}
+}
+
+func TestLoadRulesMissingUsesDefault(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	want := strings.TrimSpace(DefaultRules)
+	if want == "" {
+		t.Fatal("DefaultRules must not be empty")
+	}
+	if cfg.Rules != want {
+		t.Fatalf("Rules = %q, want default", cfg.Rules)
+	}
+}
+
+func TestLoadRulesFileReplacesDefault(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+		"AGENTS.md":    "  Also be Finnish.  \n",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Rules != "Also be Finnish." {
+		t.Fatalf("Rules = %q", cfg.Rules)
+	}
+}
+
+func TestLoadRulesEmptyFileUsesDefault(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+		"AGENTS.md":    "  \n",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Rules != strings.TrimSpace(DefaultRules) {
+		t.Fatalf("empty AGENTS.md should keep default, got %q", cfg.Rules)
 	}
 }
 
