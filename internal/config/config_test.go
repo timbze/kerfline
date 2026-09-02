@@ -229,6 +229,9 @@ func TestLoadRulesMissingUsesDefault(t *testing.T) {
 	if strings.Contains(want, "does not render Markdown") {
 		t.Fatal("DefaultRules must not claim Telegram is plain text")
 	}
+	if !strings.Contains(want, "Do not narrate") || !strings.Contains(want, "I’ll check") {
+		t.Fatal("DefaultRules must forbid I'll-check narration before the answer")
+	}
 }
 
 func TestLoadRulesFileReplacesDefault(t *testing.T) {

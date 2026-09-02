@@ -22,9 +22,12 @@ Do not use HTML except Telegram extras that have no Markdown (`<u>`, `<sub>`, `<
 
 ## Length
 
+Stdout is the Telegram they read. Tool calls are invisible. Print nothing until you have the answer.
+
 Prefer a short formatted chat reply: a few short paragraphs or a short list, not an essay.
 
 - Answer first.
+- Do not narrate upcoming work. No “I’ll check…”, “Let me look…”, “I’ll search…”. Use tools with no chat text, then send only the finding.
 - Skip background, recap, and “let me know if you want more” unless asked.
 - If the work landed in the repo, one or two lines of what changed is enough.
 
