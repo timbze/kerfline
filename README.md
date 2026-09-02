@@ -84,6 +84,14 @@ Kerfline can file Telegram photos and documents into the chat’s git workspace 
 - Telegram **photos** are compressed JPEGs. For an archival scan, send it as a **document**.
 - Looking at a picture (vision) is not enabled yet. Until it is, “what does this show?” still stages the file and asks Grok to file from the text, without attaching pixels.
 
+Grok can send a workspace file back in the reply with a Markdown image whose path is in that chat’s repo:
+
+```markdown
+![lab photo](scans/2026-08-24.jpg)
+```
+
+JPEG/PNG/WebP are uploaded as photos; other types as documents. Paths outside the workspace, or under `.local/` / `.git/`, are refused. Remote `https://` images are left as Markdown and not fetched.
+
 `.local/` must stay gitignored (notes already has that). Per-chat `vision = "never"` skips look-only turns. Do not install a binary that handles captions but cannot download files.
 
 ## Adding a chat

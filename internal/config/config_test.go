@@ -320,6 +320,12 @@ func TestDefaultRulesIncludeAttachments(t *testing.T) {
 			t.Fatal("DefaultRules must forbid staging telegram-inbox")
 		}
 	}
+	if !strings.Contains(DefaultRules, "Sending files to Telegram") {
+		t.Fatal("DefaultRules must describe sending workspace files back")
+	}
+	if !strings.Contains(DefaultRules, "![short caption](relative/path.jpg)") {
+		t.Fatal("DefaultRules must show the markdown image send syntax")
+	}
 }
 
 func TestUnknownChat(t *testing.T) {

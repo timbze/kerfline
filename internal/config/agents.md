@@ -52,3 +52,19 @@ downloaded the file into this workspace.
   stage `.local/` or `telegram-inbox`.
 - Telegram **photo** is compressed JPEG. Say so if the user wanted an
   archival original; they can re-send as a document.
+
+## Sending files to Telegram
+
+Kerfline uploads Markdown images whose path is a file in this workspace:
+
+![short caption](relative/path.jpg)
+
+JPEG, PNG, and WebP become Telegram photos; anything else (PDF, HEIC, …)
+becomes a document. Put the explanation in the text above or below; the
+alt/title is only the caption.
+
+- Path must be workspace-relative (or an absolute path inside this repo).
+  Never `.local/`, `.git/`, or `.jailbee/`.
+- Only send a file that exists. Never invent bytes or a `file_id`.
+- Do not wrap the image in a code span or fence if you want it uploaded.
+- `![…](https://…)` stays a link; Kerfline does not fetch the internet.

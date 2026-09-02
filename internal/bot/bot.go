@@ -3,7 +3,9 @@ package bot
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +26,7 @@ const (
 	// telegramPlainMax is under the 4096-character sendMessage limit, used only as fallback.
 	telegramPlainMax = 3900
 	typingRefresh    = 4 * time.Second
+	telegramUpload   = 90 * time.Second
 )
 
 type Bot struct {
@@ -259,7 +262,7 @@ func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 		reply = "(empty reply)"
 	}
 	b.log.Info("grok done", "chat", chat.Name, "duration", res.Duration, "out_chars", len(reply))
-	return b.replyChunks(tg, msg, reply)
+	return b.replyChunks(tg, msg, chat.Workspace, reply)
 }
 
 func classifyInput(msg *gotgbot.Message, ref *media.AttachmentRef) string {
@@ -358,10 +361,36 @@ func typingLoop(ctx context.Context, send func(), interval time.Duration) {
 	}
 }
 
-func (b *Bot) replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) error {
+func (b *Bot) replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, workspace, text string) error {
+	parts := media.SplitOutbound(workspace, text, b.cfg.Media.MaxFileBytes)
+	if len(parts) == 0 {
+		return b.sendTextChunks(tg, msg, "(empty reply)")
+	}
+	for _, p := range parts {
+		if p.Kind == media.PartFile {
+			if err := b.sendOutboundFile(tg, msg, p); err != nil {
+				b.log.Error("outbound file", "path", p.RelPath, "err", redactToken(err.Error(), tg.Token))
+				note := "Couldn't send `" + p.RelPath + "`."
+				if sendErr := b.sendTextChunks(tg, msg, note); sendErr != nil {
+					return sendErr
+				}
+			}
+			continue
+		}
+		if err := b.sendTextChunks(tg, msg, p.Text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Bot) sendTextChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) error {
 	richOpts := richReplyOpts(msg)
 	plainOpts := replyOpts(msg)
 	for _, chunk := range splitTelegram(text, telegramRichMax) {
+		if chunk == "" {
+			continue
+		}
 		_, err := msg.ReplyRichMessage(tg, gotgbot.InputRichMessage{Markdown: chunk}, richOpts)
 		if err == nil {
 			continue
@@ -373,6 +402,55 @@ func (b *Bot) replyChunks(tg *gotgbot.Bot, msg *gotgbot.Message, text string) er
 			}
 		}
 	}
+	return nil
+}
+
+func (b *Bot) sendOutboundFile(tg *gotgbot.Bot, msg *gotgbot.Message, p media.OutboundPart) error {
+	f, err := os.Open(p.AbsPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	input := gotgbot.InputFileByReader(p.FileName, f)
+	caption := media.TruncateCaption(p.Caption)
+	timeout := &gotgbot.RequestOpts{Timeout: telegramUpload}
+	thread := topicThreadID(msg)
+
+	sendDoc := func() error {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		opts := &gotgbot.SendDocumentOpts{Caption: caption, RequestOpts: timeout}
+		if thread != 0 {
+			opts.MessageThreadId = thread
+		}
+		_, err := msg.ReplyDocument(tg, input, opts)
+		return err
+	}
+
+	if p.SendAs == "photo" {
+		opts := &gotgbot.SendPhotoOpts{Caption: caption, RequestOpts: timeout}
+		if thread != 0 {
+			opts.MessageThreadId = thread
+		}
+		_, err := msg.ReplyPhoto(tg, input, opts)
+		if err == nil {
+			b.log.Info("outbound file", "path", p.RelPath, "as", "photo", "bytes", p.Bytes)
+			return nil
+		}
+		b.log.Error("photo send failed; sending as document", "path", p.RelPath, "err", redactToken(err.Error(), tg.Token))
+		if err := sendDoc(); err != nil {
+			return err
+		}
+		b.log.Info("outbound file", "path", p.RelPath, "as", "document", "bytes", p.Bytes)
+		return nil
+	}
+
+	if err := sendDoc(); err != nil {
+		return err
+	}
+	b.log.Info("outbound file", "path", p.RelPath, "as", "document", "bytes", p.Bytes)
 	return nil
 }
 
