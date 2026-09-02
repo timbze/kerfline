@@ -314,6 +314,12 @@ mode = "poll"`,
 	}
 }
 
+func TestDefaultRulesForbidPersonalNames(t *testing.T) {
+	if !strings.Contains(DefaultRules, "Never put personal names") {
+		t.Fatal("DefaultRules must forbid personal names in captions, paths, and examples")
+	}
+}
+
 func TestDefaultRulesIncludeAttachments(t *testing.T) {
 	if !strings.Contains(DefaultRules, "Telegram attachments") {
 		t.Fatal("DefaultRules must describe Telegram attachments")
