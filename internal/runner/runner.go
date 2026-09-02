@@ -18,6 +18,12 @@ type Result struct {
 	Duration time.Duration
 }
 
+type Request struct {
+	Prompt     string
+	PromptFile string
+	Deny       []string
+}
+
 type Runner struct {
 	LookPath func(string) (string, error)
 	Command  func(ctx context.Context, name string, args ...string) *exec.Cmd
@@ -30,7 +36,14 @@ func New() *Runner {
 	}
 }
 
-func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, prompt string, sessionID string, resume bool) (Result, error) {
+func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, req Request, sessionID string, resume bool) (Result, error) {
+	if req.Prompt != "" && req.PromptFile != "" {
+		return Result{}, fmt.Errorf("prompt and prompt-file are mutually exclusive")
+	}
+	if req.Prompt == "" && req.PromptFile == "" {
+		return Result{}, fmt.Errorf("prompt is required")
+	}
+
 	bin := cfg.Jailbee.Binary
 	path, err := r.LookPath(bin)
 	if err != nil {
@@ -53,9 +66,14 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 		"-c", chat.JailbeeConfig(),
 		chat.JailbeeContainer,
 		"--",
-		"grok", "-p", prompt,
-		"--output-format", "plain",
+		"grok",
 	}
+	if req.PromptFile != "" {
+		args = append(args, "--prompt-file", req.PromptFile)
+	} else {
+		args = append(args, "-p", req.Prompt)
+	}
+	args = append(args, "--output-format", "plain")
 	if cfg.Grok.AlwaysApprove {
 		args = append(args, "--always-approve")
 	}
@@ -68,6 +86,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 		} else {
 			args = append(args, "-s", sessionID)
 		}
+	}
+	for _, rule := range req.Deny {
+		args = append(args, "--deny", rule)
 	}
 	args = append(args, cfg.Grok.ExtraArgs...)
 	if cfg.Rules != "" {

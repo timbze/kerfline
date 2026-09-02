@@ -33,3 +33,22 @@ If the user asks for something detailed (article, write-up, design, comparison, 
 The Telegram message is the user-facing summary, not the full transcript.
 
 If the prompt includes a quoted Telegram message, that is the subject of the user's request.
+
+## Telegram attachments
+
+When the prompt includes an **Attachment** block, Kerfline has already
+downloaded the file into this workspace.
+
+- The `handle` is a workspace-relative path. Copy it with `cp`/`mv`.
+  Never invent bytes. Never fetch Telegram. Never use a `file_id`.
+- If `vision: not attached`, do not open, Read, Grep, or describe the
+  image. File it from the user's text and this workspace's AGENTS.md.
+- If `vision: attached`, you may use the image to answer. Still copy
+  from `handle` if the user also asked to save.
+- Destination directories and Markdown links come from the workspace
+  AGENTS.md, not from these Telegram rules.
+- After a save: `git add` only the dest file(s) and the Markdown you
+  changed; `git commit` with a short message naming the dest. Never
+  stage `.local/` or `telegram-inbox`.
+- Telegram **photo** is compressed JPEG. Say so if the user wanted an
+  archival original; they can re-send as a document.

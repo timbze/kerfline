@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -50,10 +51,11 @@ func BuildGrokPrompt(msg *gotgbot.Message, botUsername string, requireMention bo
 	if msg == nil {
 		return "", false
 	}
-	userText, want := PromptFromMessage(msg.Text, botUsername, requireMention)
+	text := msg.GetText()
+	userText, want := PromptFromMessage(text, botUsername, requireMention)
 	quoted := replyContext(msg)
 	if !want {
-		if quoted == "" || !addressedWithoutPrompt(msg.Text, botUsername) {
+		if quoted == "" || !addressedWithoutPrompt(text, botUsername) {
 			return "", false
 		}
 		return quoted, true
@@ -146,6 +148,10 @@ func mediaLabel(m *gotgbot.Message) string {
 	}
 	switch {
 	case len(m.Photo) > 0:
+		p := m.Photo[len(m.Photo)-1]
+		if p.Width > 0 && p.Height > 0 {
+			return fmt.Sprintf("[photo %dx%d]", p.Width, p.Height)
+		}
 		return "[photo]"
 	case m.Animation != nil:
 		return "[animation]"
@@ -164,10 +170,7 @@ func mediaLabel(m *gotgbot.Message) string {
 		}
 		return "[audio]"
 	case m.Document != nil:
-		if m.Document.FileName != "" {
-			return "[document: " + m.Document.FileName + "]"
-		}
-		return "[document]"
+		return documentLabel(m.Document)
 	case m.Sticker != nil:
 		return "[sticker]"
 	case m.Poll != nil && m.Poll.Question != "":
@@ -178,6 +181,54 @@ func mediaLabel(m *gotgbot.Message) string {
 		return "[contact]"
 	default:
 		return ""
+	}
+}
+
+func documentLabel(d *gotgbot.Document) string {
+	if d == nil {
+		return "[document]"
+	}
+	if d.FileName != "" && d.MimeType == "" && d.FileSize == 0 {
+		return "[document: " + d.FileName + "]"
+	}
+	if d.FileName == "" && d.MimeType == "" && d.FileSize == 0 {
+		return "[document]"
+	}
+	var b strings.Builder
+	b.WriteString("[document")
+	if d.FileName != "" {
+		b.WriteString(": ")
+		b.WriteString(d.FileName)
+	}
+	inner := strings.TrimSpace(d.MimeType)
+	if d.FileSize > 0 {
+		if inner != "" {
+			inner += ", "
+		}
+		inner += formatFileSize(d.FileSize)
+	}
+	if inner != "" {
+		if d.FileName == "" {
+			b.WriteString(": ")
+		} else {
+			b.WriteByte(' ')
+		}
+		b.WriteByte('(')
+		b.WriteString(inner)
+		b.WriteByte(')')
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func formatFileSize(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fMB", float64(n)/1_000_000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fKB", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%dB", n)
 	}
 }
 

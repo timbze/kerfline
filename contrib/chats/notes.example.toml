@@ -10,6 +10,8 @@ telegram_chat_id = 0
 allowed_user_ids = []
 # Groups: true. Your private DM with the bot: false.
 require_mention = true
+# Optional. Overrides [media].vision for this chat (auto | always | never).
+# vision = "never"
 workspace = "/home/you/kerfline-workspaces/notes"
 jailbee_container = "main"
 # Later: dedicated Gitea bot user invited only to this repo. Do not reuse host tea.

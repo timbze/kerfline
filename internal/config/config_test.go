@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTree(t *testing.T, files map[string]string) string {
@@ -259,6 +260,65 @@ mode = "poll"`,
 	}
 	if cfg.Rules != strings.TrimSpace(DefaultRules) {
 		t.Fatalf("empty AGENTS.md should keep default, got %q", cfg.Rules)
+	}
+}
+
+func TestMediaDefaultsAndVision(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if cfg.Media.MaxFileBytes != 20_000_000 {
+		t.Fatalf("max_file_bytes %d", cfg.Media.MaxFileBytes)
+	}
+	if cfg.Media.Vision != VisionAuto {
+		t.Fatalf("vision %q", cfg.Media.Vision)
+	}
+	if cfg.InboxTTL() != 168*time.Hour {
+		t.Fatalf("ttl %s", cfg.InboxTTL())
+	}
+	if cfg.EffectiveVision(cfg.Chats[0]) != VisionAuto {
+		t.Fatal("inherit")
+	}
+}
+
+func TestChatVisionOverride(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\nvision = \"never\"\n",
+	})
+	if cfg.EffectiveVision(cfg.Chats[0]) != VisionNever {
+		t.Fatalf("got %q", cfg.EffectiveVision(cfg.Chats[0]))
+	}
+}
+
+func TestUnknownVisionRejected(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[media]
+vision = "off"`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected unknown media.vision error")
+	}
+	dir = writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\nvision = \"true\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected unknown chat vision error")
+	}
+}
+
+func TestDefaultRulesIncludeAttachments(t *testing.T) {
+	if !strings.Contains(DefaultRules, "Telegram attachments") {
+		t.Fatal("DefaultRules must describe Telegram attachments")
+	}
+	if !strings.Contains(DefaultRules, "Never stage `.local/`") && !strings.Contains(DefaultRules, "Never\nstage `.local/`") {
+		if !strings.Contains(DefaultRules, "telegram-inbox") {
+			t.Fatal("DefaultRules must forbid staging telegram-inbox")
+		}
 	}
 }
 

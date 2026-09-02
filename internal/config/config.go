@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -18,12 +19,20 @@ var DefaultRules string
 const (
 	ModeWebhook = "webhook"
 	ModePoll    = "poll"
+
+	VisionAuto   = "auto"
+	VisionAlways = "always"
+	VisionNever  = "never"
+
+	defaultMaxFileBytes int64 = 20_000_000
+	defaultInboxTTL           = "168h"
 )
 
 type Config struct {
 	Telegram Telegram `toml:"telegram"`
 	Grok     Grok     `toml:"grok"`
 	Jailbee  Jailbee  `toml:"jailbee"`
+	Media    Media    `toml:"media"`
 	Chats    []Chat   `toml:"-"`
 	Dir      string   `toml:"-"`
 	// Rules is passed to grok --rules: AGENTS.md if present, otherwise DefaultRules.
@@ -65,6 +74,12 @@ type Jailbee struct {
 	Binary string `toml:"binary"`
 }
 
+type Media struct {
+	MaxFileBytes int64  `toml:"max_file_bytes"`
+	Vision       string `toml:"vision"`
+	InboxTTL     string `toml:"inbox_ttl"`
+}
+
 type Chat struct {
 	Name             string  `toml:"name"`
 	TelegramChatID   int64   `toml:"telegram_chat_id"`
@@ -75,15 +90,17 @@ type Chat struct {
 	JailbeeContainer string  `toml:"jailbee_container"`
 	GiteaRemote      string  `toml:"gitea_remote"`
 	TeaLogin         string  `toml:"tea_login"`
+	// Vision overrides [media].vision for this chat. Empty inherits.
+	Vision string `toml:"vision"`
 }
 
 type TelegramKind int
 
 const (
-	TelegramUnknownChat TelegramKind = iota // no Chat with this telegram_chat_id
-	TelegramIgnoredTopic                    // some Chat has this chat_id; none matched thread
-	TelegramExact                           // TelegramTopicID == threadID && threadID != 0
-	TelegramCatchAll                        // TelegramTopicID == 0
+	TelegramUnknownChat  TelegramKind = iota // no Chat with this telegram_chat_id
+	TelegramIgnoredTopic                     // some Chat has this chat_id; none matched thread
+	TelegramExact                            // TelegramTopicID == threadID && threadID != 0
+	TelegramCatchAll                         // TelegramTopicID == 0
 )
 
 type tgKey struct {
@@ -163,6 +180,16 @@ func applyDefaults(cfg *Config) {
 	if cfg.Jailbee.Binary == "" {
 		cfg.Jailbee.Binary = "jailbee"
 	}
+	if cfg.Media.MaxFileBytes == 0 {
+		cfg.Media.MaxFileBytes = defaultMaxFileBytes
+	}
+	if cfg.Media.Vision == "" {
+		cfg.Media.Vision = VisionAuto
+	}
+	cfg.Media.Vision = strings.ToLower(cfg.Media.Vision)
+	if cfg.Media.InboxTTL == "" {
+		cfg.Media.InboxTTL = defaultInboxTTL
+	}
 }
 
 func loadChats(cfg *Config, dir string) error {
@@ -200,6 +227,7 @@ func loadChats(cfg *Config, dir string) error {
 		if chat.TelegramTopicID < 0 {
 			return fmt.Errorf("%s: telegram_topic_id must be >= 0", path)
 		}
+		chat.Vision = strings.ToLower(strings.TrimSpace(chat.Vision))
 		if chat.TelegramChatID == 0 {
 			// Placeholder until /chatid is pasted in. Skip, don't fail startup.
 			continue
@@ -230,7 +258,48 @@ func (c *Config) validate() error {
 	if c.UseWebhook() && c.Telegram.SecretToken == "" {
 		return fmt.Errorf("telegram.secret_token is required for webhook mode")
 	}
+	if err := validVision(c.Media.Vision, "media.vision"); err != nil {
+		return err
+	}
+	if _, err := time.ParseDuration(c.Media.InboxTTL); err != nil {
+		return fmt.Errorf("media.inbox_ttl: %w", err)
+	}
+	for _, ch := range c.Chats {
+		if ch.Vision == "" {
+			continue
+		}
+		if err := validVision(ch.Vision, fmt.Sprintf("chat %q vision", ch.Name)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validVision(v, field string) error {
+	switch v {
+	case VisionAuto, VisionAlways, VisionNever:
+		return nil
+	default:
+		return fmt.Errorf("%s must be %q, %q, or %q", field, VisionAuto, VisionAlways, VisionNever)
+	}
+}
+
+func (c *Config) EffectiveVision(ch Chat) string {
+	if ch.Vision != "" {
+		return ch.Vision
+	}
+	if c.Media.Vision != "" {
+		return c.Media.Vision
+	}
+	return VisionAuto
+}
+
+func (c *Config) InboxTTL() time.Duration {
+	d, err := time.ParseDuration(c.Media.InboxTTL)
+	if err != nil || d <= 0 {
+		return 168 * time.Hour
+	}
+	return d
 }
 
 // UseWebhook is true when webhook is requested and a public HTTPS URL is set.

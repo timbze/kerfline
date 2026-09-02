@@ -13,6 +13,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 
 	"kerfline/internal/config"
+	"kerfline/internal/media"
 	"kerfline/internal/runner"
 	"kerfline/internal/session"
 )
@@ -30,12 +31,13 @@ type Bot struct {
 	log     *slog.Logger
 	runner  *runner.Runner
 	sess    *session.Store
+	media   *media.Store
 	updater *ext.Updater
 	disp    *ext.Dispatcher
 }
 
 func New(cfg *config.Config, log *slog.Logger, r *runner.Runner, sess *session.Store) *Bot {
-	return &Bot{cfg: cfg, log: log, runner: r, sess: sess}
+	return &Bot{cfg: cfg, log: log, runner: r, sess: sess, media: media.NewStore(nil, log)}
 }
 
 func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
@@ -47,9 +49,12 @@ func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
 		Logger: b.log,
 	})
 	b.updater = ext.NewUpdater(b.disp, &ext.UpdaterOpts{Logger: b.log})
+	b.media.Files = media.NewTelegram(tg)
 	b.disp.AddHandler(handlers.NewCommand("start", b.onStart))
 	b.disp.AddHandler(handlers.NewCommand("chatid", b.onChatID))
-	b.disp.AddHandler(handlers.NewMessage(message.Text, b.onText))
+	b.disp.AddHandler(handlers.NewMessage(message.Text, b.onUserMessage))
+	b.disp.AddHandler(handlers.NewMessage(message.Photo, b.onUserMessage))
+	b.disp.AddHandler(handlers.NewMessage(message.Document, b.onUserMessage))
 
 	if b.cfg.UseWebhook() {
 		return b.runWebhook(ctx, tg)
@@ -170,7 +175,7 @@ func (b *Bot) onChatID(tg *gotgbot.Bot, ctx *ext.Context) error {
 	return err
 }
 
-func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
+func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
 	if msg == nil || msg.From == nil {
 		return nil
@@ -195,8 +200,43 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 	if !want {
 		return nil
 	}
+	if inaccessibleReplyMedia(msg) {
+		_, err := msg.Reply(tg, "I don't have that file anymore; send it again.", replyOpts(msg))
+		return err
+	}
 
-	attrs := []any{"chat", chat.Name, "user_id", msg.From.Id, "chars", len(prompt)}
+	req := runner.Request{Prompt: prompt}
+	attrs := []any{"chat", chat.Name, "user_id", msg.From.Id}
+
+	if ref := media.Extract(msg); ref != nil {
+		class := media.Classify(classifyInput(msg, ref))
+		vision := b.cfg.EffectiveVision(chat)
+		_, skipLook := media.AttachVision(class, ref.MIME, vision)
+		if skipLook {
+			b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
+			_, err := msg.Reply(tg, "Looking at pictures is off for this chat.", replyOpts(msg))
+			return err
+		}
+		dlCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		staged, err := b.media.Materialize(dlCtx, chat, *ref, b.cfg.Media.MaxFileBytes, b.cfg.InboxTTL())
+		cancel()
+		if err != nil {
+			b.log.Error("media download", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+			_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
+			return sendErr
+		}
+		b.log.Info("media download",
+			"chat", chat.Name,
+			"message_id", ref.MessageID,
+			"file_unique_id", ref.FileUniqueID,
+			"bytes", staged.Bytes,
+			"kind", ref.Kind)
+		req.Prompt += media.FormatAttachment(staged, media.VisionPromptLine(class, ref.MIME, false))
+		req.Deny = media.InboxDenyRules()
+		attrs = append(attrs, "attachments", 1, "class", class.String(), "vision", false, "deny_inbox", true)
+	}
+
+	attrs = append(attrs, "chars", len(req.Prompt))
 	if msg.MessageThreadId != 0 {
 		attrs = append(attrs, "topic_id", msg.MessageThreadId)
 	}
@@ -205,10 +245,10 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 	defer stopTyping()
 
 	sessionID, resume := b.sess.ID(chat.Name)
-	res, err := b.runner.Run(context.Background(), b.cfg, chat, prompt, sessionID, resume)
+	res, err := b.runner.Run(context.Background(), b.cfg, chat, req, sessionID, resume)
 	if err != nil {
-		b.log.Error("grok failed", "chat", chat.Name, "err", err, "duration", res.Duration)
-		_, sendErr := msg.Reply(tg, "Grok failed: "+err.Error(), replyOpts(msg))
+		b.log.Error("grok failed", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token), "duration", res.Duration)
+		_, sendErr := msg.Reply(tg, "Grok failed: "+redactToken(err.Error(), tg.Token), replyOpts(msg))
 		return sendErr
 	}
 	if err := b.sess.Remember(chat.Name, sessionID); err != nil {
@@ -220,6 +260,41 @@ func (b *Bot) onText(tg *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	b.log.Info("grok done", "chat", chat.Name, "duration", res.Duration, "out_chars", len(reply))
 	return b.replyChunks(tg, msg, reply)
+}
+
+func classifyInput(msg *gotgbot.Message, ref *media.AttachmentRef) string {
+	user := strings.TrimSpace(msg.GetText())
+	if ref == nil {
+		return user
+	}
+	cap := strings.TrimSpace(ref.Caption)
+	if ref.Source == "reply_to" && cap != "" && cap != user {
+		return strings.TrimSpace(cap + "\n" + user)
+	}
+	return user
+}
+
+func inaccessibleReplyMedia(msg *gotgbot.Message) bool {
+	if media.FromMessage(msg) != nil {
+		return false
+	}
+	orig := msg.ReplyToMessage
+	if orig == nil || skipReplyOriginal(orig) {
+		return false
+	}
+	if media.FromMessage(orig) != nil {
+		return false
+	}
+	return orig.Date == 0
+}
+
+func redactToken(s, token string) string {
+	if token == "" || s == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, "bot"+token, "bot<token>")
+	s = strings.ReplaceAll(s, token, "<token>")
+	return s
 }
 
 func formatChatIDReply(msg *gotgbot.Message) string {

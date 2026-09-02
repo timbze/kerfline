@@ -187,6 +187,77 @@ func TestBuildGrokPrompt(t *testing.T) {
 			wantOK:  true,
 			contain: []string{"the oven is at 180", "User:\nwhat about this"},
 		},
+		{
+			name: "captioned photo ask group",
+			msg: &gotgbot.Message{
+				Caption: "/ask save this",
+				Photo:   []gotgbot.PhotoSize{{FileId: "x", Width: 1280, Height: 960}},
+			},
+			require: true,
+			wantOK:  true,
+			exact:   "save this",
+		},
+		{
+			name: "captioned photo ask dm",
+			msg: &gotgbot.Message{
+				Caption: "/ask save this",
+				Photo:   []gotgbot.PhotoSize{{FileId: "x"}},
+			},
+			require: false,
+			wantOK:  true,
+			exact:   "save this",
+		},
+		{
+			name:    "bare photo no turn",
+			msg:     &gotgbot.Message{Photo: []gotgbot.PhotoSize{{FileId: "x"}}},
+			require: false,
+			wantOK:  false,
+		},
+		{
+			name: "document caption ask",
+			msg: &gotgbot.Message{
+				Caption:  "/ask file this",
+				Document: &gotgbot.Document{FileName: "x.pdf", MimeType: "application/pdf"},
+			},
+			require: true,
+			wantOK:  true,
+			exact:   "file this",
+		},
+		{
+			name: "empty ask with reply to photo",
+			msg: &gotgbot.Message{
+				Text: "/ask",
+				ReplyToMessage: &gotgbot.Message{
+					From:  fromUser,
+					Photo: []gotgbot.PhotoSize{{FileId: "x", Width: 10, Height: 10}},
+				},
+			},
+			require: true,
+			wantOK:  true,
+			contain: []string{"[photo 10x10]", "From: Test User"},
+			absent:  []string{"User:"},
+		},
+		{
+			name: "empty ask caption on photo with text reply-to",
+			msg: &gotgbot.Message{
+				Caption:        "/ask",
+				Photo:          []gotgbot.PhotoSize{{FileId: "x"}},
+				ReplyToMessage: origText,
+			},
+			require: true,
+			wantOK:  true,
+			contain: []string{"the oven is at 180", "From: Test User"},
+			absent:  []string{"User:"},
+		},
+		{
+			name: "plain photo caption in group ignored",
+			msg: &gotgbot.Message{
+				Caption: "nice",
+				Photo:   []gotgbot.PhotoSize{{FileId: "x"}},
+			},
+			require: true,
+			wantOK:  false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

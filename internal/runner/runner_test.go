@@ -34,7 +34,7 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 		JailbeeContainer: "main",
 	}
 	cfg.Rules = "Keep it short."
-	if _, err := r.Run(context.Background(), cfg, chat, "ping", "11111111-1111-1111-1111-111111111111", true); err != nil {
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "11111111-1111-1111-1111-111111111111", true); err != nil {
 		t.Fatal(err)
 	}
 	if gotName != "/usr/bin/jailbee" {
@@ -68,11 +68,85 @@ func TestRunOmitsRulesWhenEmpty(t *testing.T) {
 	}
 	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
 	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
-	if _, err := r.Run(context.Background(), cfg, chat, "ping", "", false); err != nil {
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(gotArgs, " ")
 	if strings.Contains(joined, "--rules") {
 		t.Fatalf("unexpected --rules in %q", joined)
 	}
+}
+
+func TestRunDenyFlags(t *testing.T) {
+	r := New()
+	var gotArgs []string
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	req := Request{
+		Prompt: "save this",
+		Deny:   []string{"Read(.local/telegram-inbox/**)", "Grep(.local/telegram-inbox/**)"},
+	}
+	if _, err := r.Run(context.Background(), cfg, chat, req, "", false); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "grok -p save this") {
+		t.Fatalf("missing -p: %q", joined)
+	}
+	if strings.Contains(joined, "--prompt-file") {
+		t.Fatalf("unexpected prompt-file: %q", joined)
+	}
+	want := []string{"--deny", "Read(.local/telegram-inbox/**)", "--deny", "Grep(.local/telegram-inbox/**)"}
+	if !containsSeq(gotArgs, want) {
+		t.Fatalf("deny not separate argv entries: %q", joined)
+	}
+}
+
+func TestRunPromptFileXorPrompt(t *testing.T) {
+	r := New()
+	var gotArgs []string
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "x", PromptFile: "turn.json"}, "", false); err == nil {
+		t.Fatal("expected exclusive error")
+	}
+	if _, err := r.Run(context.Background(), cfg, chat, Request{PromptFile: ".local/turn.json"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "--prompt-file .local/turn.json") {
+		t.Fatalf("args %q", joined)
+	}
+	if strings.Contains(joined, "grok -p ") {
+		t.Fatalf("must not pass -p with prompt-file: %q", joined)
+	}
+}
+
+func containsSeq(args, want []string) bool {
+	if len(want) == 0 || len(args) < len(want) {
+		return false
+	}
+	for i := 0; i+len(want) <= len(args); i++ {
+		ok := true
+		for j := range want {
+			if args[i+j] != want[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }

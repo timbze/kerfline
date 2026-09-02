@@ -21,3 +21,9 @@ timeout = "10m"
 
 [jailbee]
 binary = "jailbee"
+
+[media]
+# Telegram photo/document staging. Defaults shown; all keys optional.
+max_file_bytes = 20000000
+vision = "auto"       # auto | always | never
+inbox_ttl = "168h"

@@ -98,6 +98,18 @@ func TestChatActionOpts(t *testing.T) {
 	}
 }
 
+func TestRedactToken(t *testing.T) {
+	token := "123:ABC"
+	in := "failed to execute POST request to https://api.telegram.org/bot123:ABC/getFile: timeout"
+	got := redactToken(in, token)
+	if strings.Contains(got, token) || strings.Contains(got, "bot123") {
+		t.Fatalf("leaked: %q", got)
+	}
+	if !strings.Contains(got, "bot<token>") && !strings.Contains(got, "<token>") {
+		t.Fatalf("expected redaction: %q", got)
+	}
+}
+
 func TestTypingLoopSendsUntilCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sends := make(chan struct{}, 8)

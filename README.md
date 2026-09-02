@@ -74,6 +74,18 @@ systemctl --user enable --now kerfline
 
 Trigger: `/ask …` or `@bot …`. In a DM with `require_mention = false`, any text is a Grok turn.
 
+## Photos and documents
+
+Kerfline can file Telegram photos and documents into the chat’s git workspace **without** sending pixels to Grok.
+
+- Caption a photo with `/ask save this …`, or send the photo first and **reply** to it with `/ask …` (or unadorned text in a DM).
+- The host downloads the file into gitignored `.local/telegram-inbox/` and Grok `cp`s that handle to a dest from the **workspace** `AGENTS.md`. Grok is told not to open the image; inbox `Read`/`Grep` is denied.
+- Bare photos (no caption, no later reply) are ignored — no Grok turn and no ack.
+- Telegram **photos** are compressed JPEGs. For an archival scan, send it as a **document**.
+- Looking at a picture (vision) is not enabled yet. Until it is, “what does this show?” still stages the file and asks Grok to file from the text, without attaching pixels.
+
+`.local/` must stay gitignored (notes already has that). Per-chat `vision = "never"` skips look-only turns. Do not install a binary that handles captions but cannot download files.
+
 ## Adding a chat
 
 New workspace repo with `.jailbee/`, `jailbee new`, then a new `chats/foo.toml`. Same binary.
