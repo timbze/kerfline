@@ -33,6 +33,7 @@ type Config struct {
 	Grok     Grok     `toml:"grok"`
 	Jailbee  Jailbee  `toml:"jailbee"`
 	Media    Media    `toml:"media"`
+	STT      STT      `toml:"stt"`
 	Chats    []Chat   `toml:"-"`
 	Dir      string   `toml:"-"`
 	// Rules is passed to grok --rules: AGENTS.md if present, otherwise DefaultRules.
@@ -78,6 +79,12 @@ type Media struct {
 	MaxFileBytes int64  `toml:"max_file_bytes"`
 	Vision       string `toml:"vision"`
 	InboxTTL     string `toml:"inbox_ttl"`
+}
+
+type STT struct {
+	BaseURL  string `toml:"base_url"`
+	Timeout  string `toml:"timeout"`
+	AuthPath string `toml:"auth_path"`
 }
 
 type Chat struct {
@@ -190,6 +197,16 @@ func applyDefaults(cfg *Config) {
 	if cfg.Media.InboxTTL == "" {
 		cfg.Media.InboxTTL = defaultInboxTTL
 	}
+	if cfg.STT.BaseURL == "" {
+		cfg.STT.BaseURL = "https://api.x.ai"
+	}
+	cfg.STT.BaseURL = strings.TrimRight(cfg.STT.BaseURL, "/")
+	if cfg.STT.Timeout == "" {
+		cfg.STT.Timeout = "2m"
+	}
+	if cfg.STT.AuthPath == "" {
+		cfg.STT.AuthPath = "/home/dev/.grok/auth.json"
+	}
 }
 
 func loadChats(cfg *Config, dir string) error {
@@ -264,6 +281,12 @@ func (c *Config) validate() error {
 	if _, err := time.ParseDuration(c.Media.InboxTTL); err != nil {
 		return fmt.Errorf("media.inbox_ttl: %w", err)
 	}
+	if _, err := time.ParseDuration(c.STT.Timeout); err != nil {
+		return fmt.Errorf("stt.timeout: %w", err)
+	}
+	if !strings.HasPrefix(c.STT.AuthPath, "/") || strings.Contains(c.STT.AuthPath, "..") {
+		return fmt.Errorf("stt.auth_path must be an absolute container path")
+	}
 	for _, ch := range c.Chats {
 		if ch.Vision == "" {
 			continue
@@ -298,6 +321,14 @@ func (c *Config) InboxTTL() time.Duration {
 	d, err := time.ParseDuration(c.Media.InboxTTL)
 	if err != nil || d <= 0 {
 		return 168 * time.Hour
+	}
+	return d
+}
+
+func (c *Config) STTTimeout() time.Duration {
+	d, err := time.ParseDuration(c.STT.Timeout)
+	if err != nil || d <= 0 {
+		return 2 * time.Minute
 	}
 	return d
 }

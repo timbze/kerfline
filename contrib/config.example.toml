@@ -27,3 +27,9 @@ binary = "jailbee"
 max_file_bytes = 20000000
 vision = "auto"       # auto | always | never
 inbox_ttl = "168h"
+
+[stt]
+# Voice/audio transcription via Grok STT. Token is XAI_API_KEY, else grok login in the jailbee container.
+# base_url = "https://api.x.ai"
+# timeout = "2m"
+# auth_path = "/home/dev/.grok/auth.json"

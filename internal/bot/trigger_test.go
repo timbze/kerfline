@@ -258,6 +258,58 @@ func TestBuildGrokPrompt(t *testing.T) {
 			require: true,
 			wantOK:  false,
 		},
+		{
+			name:    "bare voice no turn",
+			msg:     &gotgbot.Message{Voice: &gotgbot.Voice{FileId: "v"}},
+			require: false,
+			wantOK:  false,
+		},
+		{
+			name: "captioned voice ask",
+			msg: &gotgbot.Message{
+				Caption: "/ask save this",
+				Voice:   &gotgbot.Voice{FileId: "v", Duration: 12},
+			},
+			require: true,
+			wantOK:  true,
+			exact:   "save this",
+		},
+		{
+			name: "reply to voice with ask",
+			msg: &gotgbot.Message{
+				Text: "/ask what did they say",
+				ReplyToMessage: &gotgbot.Message{
+					From:  fromUser,
+					Voice: &gotgbot.Voice{FileId: "v", Duration: 12},
+				},
+			},
+			require: true,
+			wantOK:  true,
+			contain: []string{"[voice]", "From: Test User", "User:\nwhat did they say"},
+		},
+		{
+			name: "empty ask with reply to voice",
+			msg: &gotgbot.Message{
+				Text: "/ask",
+				ReplyToMessage: &gotgbot.Message{
+					From:  fromUser,
+					Voice: &gotgbot.Voice{FileId: "v"},
+				},
+			},
+			require: true,
+			wantOK:  true,
+			contain: []string{"[voice]", "From: Test User"},
+			absent:  []string{"User:"},
+		},
+		{
+			name: "plain voice caption in group ignored",
+			msg: &gotgbot.Message{
+				Caption: "nice",
+				Voice:   &gotgbot.Voice{FileId: "v"},
+			},
+			require: true,
+			wantOK:  false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

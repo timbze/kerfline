@@ -81,6 +81,57 @@ func TestExtractDocument(t *testing.T) {
 	}
 }
 
+func TestExtractVoiceAndReply(t *testing.T) {
+	voice := &gotgbot.Message{
+		MessageId: 77,
+		Date:      1,
+		Chat:      gotgbot.Chat{Id: -100},
+		Voice: &gotgbot.Voice{
+			FileId:       "voice-file",
+			FileUniqueId: "voice-uniq",
+			Duration:     12,
+			MimeType:     "audio/ogg",
+			FileSize:     4096,
+		},
+	}
+	ref := FromMessage(voice)
+	if ref == nil || ref.Kind != "voice" || ref.FileID != "voice-file" || ref.MIME != "audio/ogg" || ref.Duration != 12 {
+		t.Fatalf("voice: %+v", ref)
+	}
+	if !IsSpeech(*ref) {
+		t.Fatal("voice should be speech")
+	}
+	reply := &gotgbot.Message{Text: "/ask transcribe this", ReplyToMessage: voice}
+	got := Extract(reply)
+	if got == nil || got.Source != "reply_to" || got.Kind != "voice" || got.FileID != "voice-file" {
+		t.Fatalf("reply: %+v", got)
+	}
+	if Extract(voice).Source != "message" {
+		t.Fatalf("self: %+v", Extract(voice))
+	}
+}
+
+func TestExtractAudio(t *testing.T) {
+	msg := &gotgbot.Message{
+		MessageId: 8,
+		Audio: &gotgbot.Audio{
+			FileId:       "a1",
+			FileUniqueId: "au",
+			Duration:     90,
+			FileName:     "note.mp3",
+			MimeType:     "audio/mpeg",
+			FileSize:     8000,
+		},
+	}
+	ref := FromMessage(msg)
+	if ref == nil || ref.Kind != "audio" || ref.FileName != "note.mp3" || ref.MIME != "audio/mpeg" || ref.Duration != 90 {
+		t.Fatalf("%+v", ref)
+	}
+	if !IsSpeech(*ref) {
+		t.Fatal("audio should be speech")
+	}
+}
+
 func TestRelPathSanitizes(t *testing.T) {
 	ref := AttachmentRef{MessageID: 12, FileUniqueID: "AgAD_ok", MIME: "image/jpeg"}
 	got := RelPath("notes", ref)
@@ -102,9 +153,32 @@ func TestRelPathSanitizes(t *testing.T) {
 	}
 }
 
+func TestRelPathVoiceOgg(t *testing.T) {
+	got := RelPath("notes", AttachmentRef{MessageID: 77, FileUniqueID: "voice-uniq", MIME: "audio/ogg"})
+	if got != ".local/telegram-inbox/notes/77-voice-uniq.ogg" {
+		t.Fatalf("%s", got)
+	}
+}
+
 func TestExtForMIME(t *testing.T) {
-	if ExtForMIME("image/jpeg") != "jpg" || ExtForMIME("application/pdf") != "pdf" || ExtForMIME("foo") != "bin" {
-		t.Fatal("ext mapping")
+	cases := map[string]string{
+		"image/jpeg":             "jpg",
+		"application/pdf":        "pdf",
+		"foo":                    "bin",
+		"audio/ogg":              "ogg",
+		"audio/ogg; codecs=opus": "ogg",
+		"audio/opus":             "ogg",
+		"audio/mpeg":             "mp3",
+		"audio/mp4":              "m4a",
+		"audio/x-m4a":            "m4a",
+		"audio/wav":              "wav",
+		"audio/x-wav":            "wav",
+		"audio/flac":             "flac",
+	}
+	for mime, want := range cases {
+		if got := ExtForMIME(mime); got != want {
+			t.Fatalf("ExtForMIME(%q)=%q want %q", mime, got, want)
+		}
 	}
 }
 
@@ -136,6 +210,47 @@ func TestFormatAttachment(t *testing.T) {
 	}
 	if strings.Contains(got, "attached.") && !strings.Contains(got, "not attached") {
 		t.Fatal("should not claim attached")
+	}
+}
+
+func TestKindLineVoice(t *testing.T) {
+	got := KindLine(AttachmentRef{Kind: "voice", MIME: "audio/ogg", Duration: 12})
+	if !strings.Contains(got, "voice") || !strings.Contains(got, "12s") || !strings.Contains(got, "audio/ogg") {
+		t.Fatalf("%q", got)
+	}
+	audio := KindLine(AttachmentRef{Kind: "audio", FileName: "note.mp3", MIME: "audio/mpeg", Duration: 90})
+	if !strings.Contains(audio, "audio") || !strings.Contains(audio, "note.mp3") || !strings.Contains(audio, "90s") {
+		t.Fatalf("%q", audio)
+	}
+}
+
+func TestFormatTranscript(t *testing.T) {
+	got := FormatTranscript(Transcript{Text: "buy milk", Language: "en", Duration: 3.2})
+	for _, s := range []string{
+		"Transcript (Grok STT; this is what was said):",
+		"buy milk",
+		"language=en",
+		"duration=3.2s",
+	} {
+		if !strings.Contains(got, s) {
+			t.Fatalf("missing %q in %q", s, got)
+		}
+	}
+	empty := FormatTranscript(Transcript{})
+	if !strings.Contains(empty, "(no speech detected)") {
+		t.Fatalf("empty: %q", empty)
+	}
+}
+
+func TestSpeechPromptLine(t *testing.T) {
+	got := SpeechPromptLine()
+	for _, s := range []string{"Copy the file with cp/mv from the handle", "Transcript block", "Do not Read/Grep"} {
+		if !strings.Contains(got, s) {
+			t.Fatalf("missing %q in %q", s, got)
+		}
+	}
+	if strings.Contains(got, "image") {
+		t.Fatalf("must not talk about images: %q", got)
 	}
 }
 

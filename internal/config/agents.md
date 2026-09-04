@@ -54,6 +54,10 @@ downloaded the file into this workspace.
   image. File it from the user's text and this workspace's AGENTS.md.
 - If `vision: attached`, you may use the image to answer. Still copy
   from `handle` if the user also asked to save.
+- If the prompt includes a **Transcript** block, that is the spoken
+  text of a voice note or audio file (already transcribed). Use it as
+  the content. Do not Read/Grep the audio file. Copy from `handle` if
+  the user also asked to save.
 - Destination directories and Markdown links come from the workspace
   AGENTS.md, not from these Telegram rules.
 - After a save: `git add` only the dest file(s) and the Markdown you

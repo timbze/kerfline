@@ -113,6 +113,40 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	return res, nil
 }
 
+func (r *Runner) ReadContainerFile(ctx context.Context, cfg *config.Config, chat config.Chat, containerPath string) ([]byte, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if !strings.HasPrefix(containerPath, "/") || strings.Contains(containerPath, "..") {
+		return nil, fmt.Errorf("container path must be absolute")
+	}
+	bin := cfg.Jailbee.Binary
+	path, err := r.LookPath(bin)
+	if err != nil {
+		return nil, fmt.Errorf("find %s: %w", bin, err)
+	}
+	args := []string{
+		"exec",
+		"-c", chat.JailbeeConfig(),
+		chat.JailbeeContainer,
+		"--",
+		"cat", "--", containerPath,
+	}
+	cmd := r.Command(ctx, path, args...)
+	cmd.Dir = chat.Workspace
+	cmd.Env = filteredEnv()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("jailbee exec: %w: %s", err, truncate(stderr.String(), 500))
+		}
+		return nil, fmt.Errorf("jailbee exec: %w", err)
+	}
+	return stdout.Bytes(), nil
+}
+
 func filteredEnv() []string {
 	allow := map[string]struct{}{
 		"PATH": {}, "HOME": {}, "USER": {}, "LOGNAME": {},

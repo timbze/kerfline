@@ -314,6 +314,24 @@ mode = "poll"`,
 	}
 }
 
+func TestSTTDefaults(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if cfg.STT.BaseURL != "https://api.x.ai" {
+		t.Fatalf("base %q", cfg.STT.BaseURL)
+	}
+	if cfg.STT.Timeout != "2m" {
+		t.Fatalf("timeout %q", cfg.STT.Timeout)
+	}
+	if cfg.STT.AuthPath != "/home/dev/.grok/auth.json" {
+		t.Fatalf("auth %q", cfg.STT.AuthPath)
+	}
+	if cfg.STTTimeout() != 2*time.Minute {
+		t.Fatalf("dur %s", cfg.STTTimeout())
+	}
+}
+
 func TestDefaultRulesForbidPersonalNames(t *testing.T) {
 	if !strings.Contains(DefaultRules, "Never put personal names") {
 		t.Fatal("DefaultRules must forbid personal names in captions, paths, and examples")
@@ -331,6 +349,9 @@ func TestDefaultRulesIncludeAttachments(t *testing.T) {
 	}
 	if !strings.Contains(DefaultRules, "Sending files to Telegram") {
 		t.Fatal("DefaultRules must describe sending workspace files back")
+	}
+	if !strings.Contains(DefaultRules, "Transcript") || !strings.Contains(DefaultRules, "already transcribed") {
+		t.Fatal("DefaultRules must tell Grok that voice transcripts are already transcribed")
 	}
 	if !strings.Contains(DefaultRules, "![short caption](relative/path.jpg)") {
 		t.Fatal("DefaultRules must show the markdown image send syntax")

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,12 +37,17 @@ type Bot struct {
 	runner  *runner.Runner
 	sess    *session.Store
 	media   *media.Store
+	stt     *media.STT
 	updater *ext.Updater
 	disp    *ext.Dispatcher
 }
 
 func New(cfg *config.Config, log *slog.Logger, r *runner.Runner, sess *session.Store) *Bot {
-	return &Bot{cfg: cfg, log: log, runner: r, sess: sess, media: media.NewStore(nil, log)}
+	stt := &media.STT{BaseURL: cfg.STT.BaseURL}
+	if d := cfg.STTTimeout(); d > 0 {
+		stt.HTTP = &http.Client{Timeout: d}
+	}
+	return &Bot{cfg: cfg, log: log, runner: r, sess: sess, media: media.NewStore(nil, log), stt: stt}
 }
 
 func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
@@ -58,6 +65,8 @@ func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
 	b.disp.AddHandler(handlers.NewMessage(message.Text, b.onUserMessage))
 	b.disp.AddHandler(handlers.NewMessage(message.Photo, b.onUserMessage))
 	b.disp.AddHandler(handlers.NewMessage(message.Document, b.onUserMessage))
+	b.disp.AddHandler(handlers.NewMessage(message.Voice, b.onUserMessage))
+	b.disp.AddHandler(handlers.NewMessage(message.Audio, b.onUserMessage))
 
 	if b.cfg.UseWebhook() {
 		return b.runWebhook(ctx, tg)
@@ -213,12 +222,15 @@ func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 
 	if ref := media.Extract(msg); ref != nil {
 		class := media.Classify(classifyInput(msg, ref))
-		vision := b.cfg.EffectiveVision(chat)
-		_, skipLook := media.AttachVision(class, ref.MIME, vision)
-		if skipLook {
-			b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
-			_, err := msg.Reply(tg, "Looking at pictures is off for this chat.", replyOpts(msg))
-			return err
+		speech := media.IsSpeech(*ref)
+		if !speech {
+			vision := b.cfg.EffectiveVision(chat)
+			_, skipLook := media.AttachVision(class, ref.MIME, vision)
+			if skipLook {
+				b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
+				_, err := msg.Reply(tg, "Looking at pictures is off for this chat.", replyOpts(msg))
+				return err
+			}
 		}
 		dlCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		staged, err := b.media.Materialize(dlCtx, chat, *ref, b.cfg.Media.MaxFileBytes, b.cfg.InboxTTL())
@@ -234,9 +246,27 @@ func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 			"file_unique_id", ref.FileUniqueID,
 			"bytes", staged.Bytes,
 			"kind", ref.Kind)
-		req.Prompt += media.FormatAttachment(staged, media.VisionPromptLine(class, ref.MIME, false))
+		promptLine := media.VisionPromptLine(class, ref.MIME, false)
+		if speech {
+			promptLine = media.SpeechPromptLine()
+			sttCtx, sttCancel := context.WithTimeout(context.Background(), b.cfg.STTTimeout())
+			tr, err := b.transcribeStaged(sttCtx, chat, staged)
+			sttCancel()
+			if err != nil {
+				b.log.Error("stt", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+				_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
+				return sendErr
+			}
+			b.log.Info("stt",
+				"chat", chat.Name,
+				"language", tr.Language,
+				"duration", tr.Duration,
+				"chars", len(tr.Text))
+			req.Prompt += media.FormatTranscript(tr)
+		}
+		req.Prompt += media.FormatAttachment(staged, promptLine)
 		req.Deny = media.InboxDenyRules()
-		attrs = append(attrs, "attachments", 1, "class", class.String(), "vision", false, "deny_inbox", true)
+		attrs = append(attrs, "attachments", 1, "class", class.String(), "vision", false, "deny_inbox", true, "speech", speech)
 	}
 
 	attrs = append(attrs, "chars", len(req.Prompt))
@@ -263,6 +293,31 @@ func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	b.log.Info("grok done", "chat", chat.Name, "duration", res.Duration, "out_chars", len(reply))
 	return b.replyChunks(tg, msg, chat.Workspace, reply)
+}
+
+func (b *Bot) transcribeStaged(ctx context.Context, chat config.Chat, staged media.StagedFile) (media.Transcript, error) {
+	token, err := b.sttToken(ctx, chat)
+	if err != nil {
+		return media.Transcript{}, &media.StageError{Reason: "stt", Msg: "Couldn't transcribe that voice note."}
+	}
+	f, err := os.Open(staged.AbsPath)
+	if err != nil {
+		return media.Transcript{}, &media.StageError{Reason: "stt", Msg: "Couldn't transcribe that voice note."}
+	}
+	defer f.Close()
+	filename := filepath.Base(staged.RelPath)
+	return b.stt.Transcribe(ctx, token, f, filename, staged.Ref.MIME)
+}
+
+func (b *Bot) sttToken(ctx context.Context, chat config.Chat) (string, error) {
+	if k := strings.TrimSpace(os.Getenv("XAI_API_KEY")); k != "" {
+		return k, nil
+	}
+	raw, err := b.runner.ReadContainerFile(ctx, b.cfg, chat, b.cfg.STT.AuthPath)
+	if err != nil {
+		return "", err
+	}
+	return media.ParseGrokAuthJSON(raw)
 }
 
 func classifyInput(msg *gotgbot.Message, ref *media.AttachmentRef) string {

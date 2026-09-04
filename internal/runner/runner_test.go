@@ -132,6 +132,38 @@ func TestRunPromptFileXorPrompt(t *testing.T) {
 	}
 }
 
+func TestReadContainerFile(t *testing.T) {
+	r := New()
+	var gotArgs []string
+	body := `{"https://auth.x.ai::x":{"key":"tok-1"}}`
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "printf", "%s", body)
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	got, err := r.ReadContainerFile(context.Background(), cfg, chat, "/home/dev/.grok/auth.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("stdout %q", got)
+	}
+	joined := strings.Join(gotArgs, " ")
+	for _, want := range []string{
+		"exec -c " + chat.JailbeeConfig() + " main --",
+		"cat -- /home/dev/.grok/auth.json",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("args %q missing %q", joined, want)
+		}
+	}
+	if _, err := r.ReadContainerFile(context.Background(), cfg, chat, "relative"); err == nil {
+		t.Fatal("relative path should fail")
+	}
+}
+
 func containsSeq(args, want []string) bool {
 	if len(want) == 0 || len(args) < len(want) {
 		return false

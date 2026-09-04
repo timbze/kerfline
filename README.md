@@ -74,7 +74,7 @@ systemctl --user enable --now kerfline
 
 Trigger: `/ask …` or `@bot …`. In a DM with `require_mention = false`, any text is a Grok turn.
 
-## Photos and documents
+## Photos, documents, and voice
 
 Kerfline can file Telegram photos and documents into the chat’s git workspace **without** sending pixels to Grok.
 
@@ -83,6 +83,8 @@ Kerfline can file Telegram photos and documents into the chat’s git workspace 
 - Bare photos (no caption, no later reply) are ignored — no Grok turn and no ack.
 - Telegram **photos** are compressed JPEGs. For an archival scan, send it as a **document**.
 - Looking at a picture (vision) is not enabled yet. Until it is, “what does this show?” still stages the file and asks Grok to file from the text, without attaching pixels.
+
+Voice notes and audio work the same trigger: caption `/ask …`, or **reply** to the voice note with `/ask …` (or unadorned text in a DM). Bare voice notes are ignored. Kerfline downloads the OGG, transcribes it with Grok STT (SuperGrok login inside the JailBee container, or `XAI_API_KEY`), and puts the transcript in the Grok prompt. Grok does not listen to the file.
 
 Grok can send a workspace file back in the reply with a Markdown image whose path is in that chat’s repo:
 

@@ -2,12 +2,61 @@ package bot
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
+
+	"kerfline/internal/config"
+	"kerfline/internal/media"
 )
+
+func TestSTTTokenPrefersEnv(t *testing.T) {
+	t.Setenv("XAI_API_KEY", " env-tok ")
+	b := &Bot{cfg: &config.Config{}}
+	got, err := b.sttToken(context.Background(), config.Chat{})
+	if err != nil || got != "env-tok" {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+}
+
+func TestTranscribeStaged(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "tok")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), "ogg-bytes") {
+			t.Errorf("missing payload")
+		}
+		_, _ = w.Write([]byte(`{"text":"buy milk","language":"en","duration":2.5}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "77-voice.ogg")
+	if err := os.WriteFile(abs, []byte("ogg-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bot{
+		cfg: &config.Config{},
+		stt: &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
+	}
+	tr, err := b.transcribeStaged(context.Background(), config.Chat{}, media.StagedFile{
+		AbsPath: abs,
+		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
+		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Text != "buy milk" || tr.Language != "en" {
+		t.Fatalf("%+v", tr)
+	}
+}
 
 func TestFormatChatIDReply(t *testing.T) {
 	msg := &gotgbot.Message{
