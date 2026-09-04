@@ -353,6 +353,12 @@ func TestDefaultRulesIncludeAttachments(t *testing.T) {
 	if !strings.Contains(DefaultRules, "Transcript") || !strings.Contains(DefaultRules, "already transcribed") {
 		t.Fatal("DefaultRules must tell Grok that voice transcripts are already transcribed")
 	}
+	if !strings.Contains(DefaultRules, "**Voice note summary**") {
+		t.Fatal("DefaultRules must require a Voice note summary label")
+	}
+	if !strings.Contains(DefaultRules, "Do not paste the transcript") {
+		t.Fatal("DefaultRules must forbid dumping the STT transcript into Telegram")
+	}
 	if !strings.Contains(DefaultRules, "![short caption](relative/path.jpg)") {
 		t.Fatal("DefaultRules must show the markdown image send syntax")
 	}

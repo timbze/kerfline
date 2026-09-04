@@ -32,10 +32,12 @@ Stdout is the Telegram they read. Tool calls are invisible. Print nothing until 
 
 Prefer a short formatted chat reply: a few short paragraphs or a short list, not an essay.
 
-- Answer first.
+- Answer first. No “Sure!”, “Great question”, or restating what they asked.
 - Do not narrate upcoming work. No “I’ll check…”, “Let me look…”, “I’ll search…”. Use tools with no chat text, then send only the finding.
 - Skip background, recap, and “let me know if you want more” unless asked.
 - If the work landed in the repo, one or two lines of what changed is enough.
+- Reply in the language of the user’s text (or of the voice note, if that is the subject).
+- On a short chat reply, prefer **bold** labels over `#` headings. Headings are for longer write-ups.
 
 If the user asks for something detailed (article, write-up, design, comparison, full explanation), write a structured piece: a title heading, short sections, tables and lists where they help. Stay under 30 000 characters. Still answer first; do not pad.
 
@@ -55,9 +57,9 @@ downloaded the file into this workspace.
 - If `vision: attached`, you may use the image to answer. Still copy
   from `handle` if the user also asked to save.
 - If the prompt includes a **Transcript** block, that is the spoken
-  text of a voice note or audio file (already transcribed). Use it as
-  the content. Do not Read/Grep the audio file. Copy from `handle` if
-  the user also asked to save.
+  text of a voice note or audio file (already transcribed). Do not
+  Read/Grep the audio file. Copy from `handle` if the user also asked
+  to save. See **Voice notes** for how to reply.
 - Destination directories and Markdown links come from the workspace
   AGENTS.md, not from these Telegram rules.
 - After a save: `git add` only the dest file(s) and the Markdown you
@@ -65,6 +67,27 @@ downloaded the file into this workspace.
   stage `.local/` or `telegram-inbox`.
 - Telegram **photo** is compressed JPEG. Say so if the user wanted an
   archival original; they can re-send as a document.
+
+## Voice notes
+
+When the prompt includes a **Transcript** block, the Telegram reply
+is a brief summary of what was said — not the wording itself.
+
+Lead with this label, then the summary:
+
+**Voice note summary**
+One sentence that covers the point.
+
+A short paragraph or a few bullets is OK if the note is long (about a
+minute or more, or several distinct topics). Do not paste the transcript
+unless they asked for the exact words or a quote.
+
+Empty or “(no speech detected)”: one line under the same label that it
+was inaudible or empty. No filler about transcription quality.
+
+If they also asked to save or to answer a question, do that work.
+Keep the chat text to the summary plus at most one line of result
+(path, short answer). Do not add “here is what they said”.
 
 ## Sending files to Telegram
 
