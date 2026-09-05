@@ -65,14 +65,21 @@ echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 
 Built-in Grok rules (`internal/config/agents.md`) apply to every chat: replies are Telegram rich Markdown (short by default; a longer article if asked). If `~/.config/kerfline/AGENTS.md` exists and is non-empty, it replaces the built-in text. Restart the bot after editing it.
 
-Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, set `require_mention = true`. In a forum group, `/ask` replies stay in the topic they were written in; `/chatid` prints `topic_id` when you run it inside a topic.
+Create the bot with BotFather. Start it, DM `/chatid`, put that id in `chats/notes.toml`. For a group, add the bot, `/chatid`, and choose `require_mention` (see below). In a forum group, `/ask` replies stay in the topic they were written in; `/chatid` prints `topic_id` when you run it inside a topic.
 
 ```bash
 make install
 systemctl --user enable --now kerfline
 ```
 
-Trigger: `/ask …` or `@bot …`. In a DM with `require_mention = false`, any text is a Grok turn.
+### Triggers and the reply gate
+
+- **Groups that only want `/ask` or `@bot`:** keep `require_mention = true`. Only those host triggers start a turn (unchanged).
+- **Groups that want “hey kerf / hey grok / clearly workspace data”:** set `require_mention = false` so every non-empty line reaches Kerfline. A cheap gate decides whether to run a full Grok turn. No typing indicator and no Telegram reply when the gate says skip.
+- **DMs:** keep `require_mention = false`. The same gate applies unless `[grok].gate = false`, which restores always-on full turns.
+- **Explicit `/ask` and `@botusername`:** skip the gate (typing + full turn immediately).
+
+Optional knobs in `contrib/config.example.toml` under `[grok]`: `gate`, `gate_model`, `gate_timeout`, `gate_reasoning` (`none` | `low` | `medium` | `high` | `xhigh` | `omit`). Defaults: model `grok-4.3`, reasoning `none`. Use `omit` to leave `reasoning_effort` off the request for models that do not accept `none`.
 
 ## Photos, documents, and voice
 
