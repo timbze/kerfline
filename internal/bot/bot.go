@@ -295,8 +295,10 @@ func (b *Bot) orchestrate(ctx context.Context, chat config.Chat, msg *gotgbot.Me
 			attrs := []any{"decision", decision, "chat", chat.Name, "chars", len(prompt), "duration", time.Since(start)}
 			if err != nil {
 				attrs = append(attrs, "err", err)
+				b.log.Error("gate", attrs...)
+			} else {
+				b.log.Info("gate", attrs...)
 			}
-			b.log.Info("gate", attrs...)
 		}
 		if err != nil {
 			if !chatIsPrivate(msg) {

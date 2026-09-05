@@ -75,6 +75,55 @@ func TestShouldReplyHTTP500(t *testing.T) {
 	}
 }
 
+func TestShouldReplyHTTP400IncludesBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"max_tokens too low","type":"invalid_request"}}`))
+	}))
+	defer srv.Close()
+
+	_, err := ShouldReply(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+	}, Input{UserText: "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "400") {
+		t.Fatalf("error missing status: %q", msg)
+	}
+	if !strings.Contains(msg, "max_tokens too low") {
+		t.Fatalf("error missing body snippet: %q", msg)
+	}
+}
+
+func TestShouldReplyHTTPErrorTruncatesBody(t *testing.T) {
+	long := strings.Repeat("x", 500)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(long))
+	}))
+	defer srv.Close()
+
+	_, err := ShouldReply(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+	}, Input{UserText: "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, strings.Repeat("x", 201)) {
+		t.Fatalf("body not truncated to 200 bytes: len=%d", len(msg))
+	}
+	if !strings.Contains(msg, strings.Repeat("x", 200)) {
+		t.Fatalf("expected 200-byte body snippet: %q", msg)
+	}
+}
+
 func TestShouldReplyGarbageJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -135,7 +184,7 @@ func TestShouldReplyRequestBody(t *testing.T) {
 	if req["model"] != "grok-4.3" {
 		t.Fatalf("model=%v", req["model"])
 	}
-	if req["max_tokens"] != float64(16) {
+	if req["max_tokens"] != float64(128) {
 		t.Fatalf("max_tokens=%v", req["max_tokens"])
 	}
 	if req["reasoning_effort"] != "none" {

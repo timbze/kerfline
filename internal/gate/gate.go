@@ -37,6 +37,8 @@ type Client struct {
 
 const (
 	maxWorkspaceHintBytes = 2048
+	maxHTTPErrorBodyBytes = 200
+	maxTokens             = 128
 	systemPrompt          = "Kerfline is a Telegram bot for one git workspace. Reply true only if the user is addressing the bot, asking it to do work, answering a bot question, or dropping material that belongs in this workspace (notes, measurements, lists, facts to keep). False for ordinary chatter, jokes, and empty acknowledgements. In a private chat, lean true on short follow-ups (`ok`, `yes`, `do it`). In a group, lean false unless it is clearly for the bot or clearly workspace data."
 )
 
@@ -81,7 +83,14 @@ func ShouldReply(ctx context.Context, c *Client, in Input) (Decision, error) {
 		return Skip, fmt.Errorf("gate: read body: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Skip, fmt.Errorf("gate: http %d", resp.StatusCode)
+		snippet := respBody
+		if len(snippet) > maxHTTPErrorBodyBytes {
+			snippet = snippet[:maxHTTPErrorBodyBytes]
+		}
+		if len(snippet) == 0 {
+			return Skip, fmt.Errorf("gate: http %d", resp.StatusCode)
+		}
+		return Skip, fmt.Errorf("gate: http %d: %s", resp.StatusCode, snippet)
 	}
 
 	var out struct {
@@ -139,7 +148,7 @@ func buildRequestBody(c *Client, in Input) ([]byte, error) {
 
 	req := map[string]any{
 		"model":      c.Model,
-		"max_tokens": 16,
+		"max_tokens": maxTokens,
 		"response_format": map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{
