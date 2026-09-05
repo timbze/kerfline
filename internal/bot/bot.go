@@ -17,10 +17,21 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 
 	"kerfline/internal/config"
+	"kerfline/internal/gate"
 	"kerfline/internal/media"
 	"kerfline/internal/runner"
 	"kerfline/internal/session"
 )
+
+type gater interface {
+	Decide(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (gate.Decision, error)
+}
+
+type turnExec interface {
+	StartTyping() (stop func())
+	Download() error
+	Run() error
+}
 
 const (
 	// telegramRichMax is under the 32768-character rich-message limit (counted in bytes here).
@@ -40,6 +51,7 @@ type Bot struct {
 	stt     *media.STT
 	updater *ext.Updater
 	disp    *ext.Dispatcher
+	gate    gater
 }
 
 func New(cfg *config.Config, log *slog.Logger, r *runner.Runner, sess *session.Store) *Bot {
@@ -47,7 +59,9 @@ func New(cfg *config.Config, log *slog.Logger, r *runner.Runner, sess *session.S
 	if d := cfg.STTTimeout(); d > 0 {
 		stt.HTTP = &http.Client{Timeout: d}
 	}
-	return &Bot{cfg: cfg, log: log, runner: r, sess: sess, media: media.NewStore(nil, log), stt: stt}
+	b := &Bot{cfg: cfg, log: log, runner: r, sess: sess, media: media.NewStore(nil, log), stt: stt}
+	b.gate = &replyGate{bot: b}
+	return b
 }
 
 func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
@@ -212,73 +226,245 @@ func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 	if !want {
 		return nil
 	}
+	return b.orchestrate(context.Background(), chat, msg, prompt, tg.Username, &liveTurn{
+		bot:    b,
+		tg:     tg,
+		msg:    msg,
+		chat:   chat,
+		prompt: prompt,
+	})
+}
+
+func gateApplies(cfg *config.Config, chat config.Chat, text, botUsername string) bool {
+	if cfg == nil || !cfg.Grok.GateEnabled() {
+		return false
+	}
+	if chat.RequireMention {
+		return false
+	}
+	if ExplicitlyAddressed(text, botUsername) || addressedWithoutPrompt(text, botUsername) {
+		return false
+	}
+	return true
+}
+
+func chatIsPrivate(msg *gotgbot.Message) bool {
+	return msg != nil && msg.Chat.Type == gotgbot.ChatTypePrivate
+}
+
+func gateTimeout(cfg *config.Config) time.Duration {
+	if cfg == nil {
+		return 15 * time.Second
+	}
+	d, err := time.ParseDuration(cfg.Grok.GateTimeout)
+	if err != nil || d <= 0 {
+		return 15 * time.Second
+	}
+	return d
+}
+
+func readWorkspaceHint(workspace string) string {
+	if workspace == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	if err != nil {
+		return ""
+	}
+	if len(raw) > 2048 {
+		raw = raw[:2048]
+	}
+	return string(raw)
+}
+
+func (b *Bot) orchestrate(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt, botUsername string, exec turnExec) error {
+	if gateApplies(b.cfg, chat, msg.GetText(), botUsername) {
+		start := time.Now()
+		g := b.gate
+		if g == nil {
+			g = &replyGate{bot: b}
+		}
+		d, err := g.Decide(ctx, chat, msg, prompt)
+		decision := "reply"
+		if err != nil {
+			decision = "error"
+		} else if d == gate.Skip {
+			decision = "skip"
+		}
+		if b.log != nil {
+			attrs := []any{"decision", decision, "chat", chat.Name, "chars", len(prompt), "duration", time.Since(start)}
+			if err != nil {
+				attrs = append(attrs, "err", err)
+			}
+			b.log.Info("gate", attrs...)
+		}
+		if err != nil {
+			if !chatIsPrivate(msg) {
+				return nil
+			}
+		} else if d == gate.Skip {
+			return nil
+		}
+	}
+
+	stop := exec.StartTyping()
+	defer stop()
+	if err := exec.Download(); err != nil {
+		return err
+	}
+	return exec.Run()
+}
+
+type replyGate struct {
+	bot *Bot
+}
+
+func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (gate.Decision, error) {
+	if msg == nil {
+		return gate.Skip, fmt.Errorf("gate: nil message")
+	}
+	text := msg.GetText()
+	if Vocative(text) {
+		return gate.Reply, nil
+	}
+	if orig := msg.ReplyToMessage; orig != nil && orig.From != nil && orig.From.IsBot {
+		return gate.Reply, nil
+	}
+
+	timeout := gateTimeout(g.bot.cfg)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	token, err := g.bot.authToken(ctx, chat)
+	if err != nil {
+		return gate.Skip, err
+	}
+
+	userText, ok := PromptFromMessage(text, "", false)
+	if !ok || userText == "" {
+		userText = strings.TrimSpace(text)
+	}
+
+	client := &gate.Client{Token: token, Timeout: timeout}
+	if cfg := g.bot.cfg; cfg != nil {
+		client.BaseURL = cfg.STT.BaseURL
+		client.Model = cfg.Grok.GateModel
+		client.Reasoning = cfg.Grok.GateReasoning
+	}
+	if client.Reasoning == "" {
+		client.Reasoning = "none"
+	}
+
+	return gate.ShouldReply(ctx, client, gate.Input{
+		ChatName:      chat.Name,
+		Private:       chatIsPrivate(msg),
+		WorkspaceHint: readWorkspaceHint(chat.Workspace),
+		Quoted:        replyContext(msg),
+		UserText:      userText,
+	})
+}
+
+type liveTurn struct {
+	bot        *Bot
+	tg         *gotgbot.Bot
+	msg        *gotgbot.Message
+	chat       config.Chat
+	prompt     string
+	req        runner.Request
+	mediaAttrs []any
+	aborted    bool
+}
+
+func (t *liveTurn) StartTyping() func() {
+	return keepTyping(t.tg, t.msg)
+}
+
+func (t *liveTurn) Download() error {
+	b := t.bot
+	tg := t.tg
+	msg := t.msg
+	chat := t.chat
 	if inaccessibleReplyMedia(msg) {
 		_, err := msg.Reply(tg, "I don't have that file anymore; send it again.", replyOpts(msg))
+		t.aborted = true
 		return err
 	}
 
-	req := runner.Request{Prompt: prompt}
-	attrs := []any{"chat", chat.Name, "user_id", msg.From.Id}
-
-	if ref := media.Extract(msg); ref != nil {
-		class := media.Classify(classifyInput(msg, ref))
-		speech := media.IsSpeech(*ref)
-		if !speech {
-			vision := b.cfg.EffectiveVision(chat)
-			_, skipLook := media.AttachVision(class, ref.MIME, vision)
-			if skipLook {
-				b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
-				_, err := msg.Reply(tg, "Looking at pictures is off for this chat.", replyOpts(msg))
-				return err
-			}
+	t.req = runner.Request{Prompt: t.prompt}
+	ref := media.Extract(msg)
+	if ref == nil {
+		return nil
+	}
+	class := media.Classify(classifyInput(msg, ref))
+	speech := media.IsSpeech(*ref)
+	if !speech {
+		vision := b.cfg.EffectiveVision(chat)
+		_, skipLook := media.AttachVision(class, ref.MIME, vision)
+		if skipLook {
+			b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
+			_, err := msg.Reply(tg, "Looking at pictures is off for this chat.", replyOpts(msg))
+			t.aborted = true
+			return err
 		}
-		dlCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		staged, err := b.media.Materialize(dlCtx, chat, *ref, b.cfg.Media.MaxFileBytes, b.cfg.InboxTTL())
-		cancel()
+	}
+	dlCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	staged, err := b.media.Materialize(dlCtx, chat, *ref, b.cfg.Media.MaxFileBytes, b.cfg.InboxTTL())
+	cancel()
+	if err != nil {
+		b.log.Error("media download", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+		_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
+		t.aborted = true
+		return sendErr
+	}
+	b.log.Info("media download",
+		"chat", chat.Name,
+		"message_id", ref.MessageID,
+		"file_unique_id", ref.FileUniqueID,
+		"bytes", staged.Bytes,
+		"kind", ref.Kind)
+	promptLine := media.VisionPromptLine(class, ref.MIME, false)
+	if speech {
+		promptLine = media.SpeechPromptLine()
+		sttCtx, sttCancel := context.WithTimeout(context.Background(), b.cfg.STTTimeout())
+		tr, err := b.transcribeStaged(sttCtx, chat, staged)
+		sttCancel()
 		if err != nil {
-			b.log.Error("media download", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+			b.log.Error("stt", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
 			_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
+			t.aborted = true
 			return sendErr
 		}
-		b.log.Info("media download",
+		b.log.Info("stt",
 			"chat", chat.Name,
-			"message_id", ref.MessageID,
-			"file_unique_id", ref.FileUniqueID,
-			"bytes", staged.Bytes,
-			"kind", ref.Kind)
-		promptLine := media.VisionPromptLine(class, ref.MIME, false)
-		if speech {
-			promptLine = media.SpeechPromptLine()
-			sttCtx, sttCancel := context.WithTimeout(context.Background(), b.cfg.STTTimeout())
-			tr, err := b.transcribeStaged(sttCtx, chat, staged)
-			sttCancel()
-			if err != nil {
-				b.log.Error("stt", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
-				_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
-				return sendErr
-			}
-			b.log.Info("stt",
-				"chat", chat.Name,
-				"language", tr.Language,
-				"duration", tr.Duration,
-				"chars", len(tr.Text))
-			req.Prompt += media.FormatTranscript(tr)
-		}
-		req.Prompt += media.FormatAttachment(staged, promptLine)
-		req.Deny = media.InboxDenyRules()
-		attrs = append(attrs, "attachments", 1, "class", class.String(), "vision", false, "deny_inbox", true, "speech", speech)
+			"language", tr.Language,
+			"duration", tr.Duration,
+			"chars", len(tr.Text))
+		t.req.Prompt += media.FormatTranscript(tr)
 	}
+	t.req.Prompt += media.FormatAttachment(staged, promptLine)
+	t.req.Deny = media.InboxDenyRules()
+	t.mediaAttrs = []any{"attachments", 1, "class", class.String(), "vision", false, "deny_inbox", true, "speech", speech}
+	return nil
+}
 
-	attrs = append(attrs, "chars", len(req.Prompt))
+func (t *liveTurn) Run() error {
+	if t.aborted {
+		return nil
+	}
+	b := t.bot
+	tg := t.tg
+	msg := t.msg
+	chat := t.chat
+	attrs := []any{"chat", chat.Name, "user_id", msg.From.Id}
+	attrs = append(attrs, t.mediaAttrs...)
+	attrs = append(attrs, "chars", len(t.req.Prompt))
 	if msg.MessageThreadId != 0 {
 		attrs = append(attrs, "topic_id", msg.MessageThreadId)
 	}
 	b.log.Info("grok turn", attrs...)
-	stopTyping := keepTyping(tg, msg)
-	defer stopTyping()
 
 	sessionID, resume := b.sess.ID(chat.Name)
-	res, err := b.runner.Run(context.Background(), b.cfg, chat, req, sessionID, resume)
+	res, err := b.runner.Run(context.Background(), b.cfg, chat, t.req, sessionID, resume)
 	if err != nil {
 		b.log.Error("grok failed", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token), "duration", res.Duration)
 		_, sendErr := msg.Reply(tg, "Grok failed: "+redactToken(err.Error(), tg.Token), replyOpts(msg))
@@ -310,6 +496,10 @@ func (b *Bot) transcribeStaged(ctx context.Context, chat config.Chat, staged med
 }
 
 func (b *Bot) sttToken(ctx context.Context, chat config.Chat) (string, error) {
+	return b.authToken(ctx, chat)
+}
+
+func (b *Bot) authToken(ctx context.Context, chat config.Chat) (string, error) {
 	if k := strings.TrimSpace(os.Getenv("XAI_API_KEY")); k != "" {
 		return k, nil
 	}
