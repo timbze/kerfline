@@ -373,3 +373,124 @@ func TestUnknownChat(t *testing.T) {
 		t.Fatalf("kind = %d, want unknown chat", kind)
 	}
 }
+
+func TestGateDefaults(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if cfg.Grok.Gate != nil {
+		t.Fatalf("Gate = %v, want nil", cfg.Grok.Gate)
+	}
+	if !cfg.Grok.GateEnabled() {
+		t.Fatal("GateEnabled should be true when gate is unset")
+	}
+	if cfg.Grok.GateModel != "grok-4.3" {
+		t.Fatalf("GateModel = %q, want grok-4.3", cfg.Grok.GateModel)
+	}
+	if cfg.Grok.GateTimeout != "15s" {
+		t.Fatalf("GateTimeout = %q, want 15s", cfg.Grok.GateTimeout)
+	}
+	if cfg.Grok.GateReasoning != "none" {
+		t.Fatalf("GateReasoning = %q, want none", cfg.Grok.GateReasoning)
+	}
+}
+
+func TestGateOverride(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate = true
+gate_model = "grok-4"
+gate_timeout = "30s"
+gate_reasoning = "HIGH"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Grok.Gate == nil || !*cfg.Grok.Gate {
+		t.Fatal("gate should be true")
+	}
+	if !cfg.Grok.GateEnabled() {
+		t.Fatal("GateEnabled should be true")
+	}
+	if cfg.Grok.GateModel != "grok-4" {
+		t.Fatalf("GateModel = %q", cfg.Grok.GateModel)
+	}
+	if cfg.Grok.GateTimeout != "30s" {
+		t.Fatalf("GateTimeout = %q", cfg.Grok.GateTimeout)
+	}
+	if cfg.Grok.GateReasoning != "high" {
+		t.Fatalf("GateReasoning = %q, want lowercase high", cfg.Grok.GateReasoning)
+	}
+}
+
+func TestGateDisabled(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate = false
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Grok.Gate == nil || *cfg.Grok.Gate {
+		t.Fatal("gate should be false")
+	}
+	if cfg.Grok.GateEnabled() {
+		t.Fatal("GateEnabled should be false when gate = false")
+	}
+}
+
+func TestGateInvalidTimeout(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate_timeout = "soon"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected invalid gate_timeout error")
+	}
+}
+
+func TestGateInvalidReasoning(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate_reasoning = "extreme"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected invalid gate_reasoning error")
+	}
+}
+
+func TestGateReasoningOmitAccepted(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate_reasoning = "omit"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Grok.GateReasoning != "omit" {
+		t.Fatalf("GateReasoning = %q, want omit", cfg.Grok.GateReasoning)
+	}
+}

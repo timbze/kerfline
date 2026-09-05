@@ -69,6 +69,18 @@ type Grok struct {
 	DisallowedTools []string `toml:"disallowed_tools"`
 	ExtraArgs       []string `toml:"extra_args"`
 	Timeout         string   `toml:"timeout"`
+	Gate            *bool    `toml:"gate"`
+	GateModel       string   `toml:"gate_model"`
+	GateTimeout     string   `toml:"gate_timeout"`
+	GateReasoning   string   `toml:"gate_reasoning"`
+}
+
+// GateEnabled is true unless gate is explicitly false.
+func (g Grok) GateEnabled() bool {
+	if g.Gate == nil {
+		return true
+	}
+	return *g.Gate
 }
 
 type Jailbee struct {
@@ -184,6 +196,16 @@ func applyDefaults(cfg *Config) {
 	if cfg.Grok.Timeout == "" {
 		cfg.Grok.Timeout = "10m"
 	}
+	if cfg.Grok.GateModel == "" {
+		cfg.Grok.GateModel = "grok-4.3"
+	}
+	if cfg.Grok.GateTimeout == "" {
+		cfg.Grok.GateTimeout = "15s"
+	}
+	if cfg.Grok.GateReasoning == "" {
+		cfg.Grok.GateReasoning = "none"
+	}
+	cfg.Grok.GateReasoning = strings.ToLower(cfg.Grok.GateReasoning)
 	if cfg.Jailbee.Binary == "" {
 		cfg.Jailbee.Binary = "jailbee"
 	}
@@ -283,6 +305,14 @@ func (c *Config) validate() error {
 	}
 	if _, err := time.ParseDuration(c.STT.Timeout); err != nil {
 		return fmt.Errorf("stt.timeout: %w", err)
+	}
+	if _, err := time.ParseDuration(c.Grok.GateTimeout); err != nil {
+		return fmt.Errorf("grok.gate_timeout: %w", err)
+	}
+	switch c.Grok.GateReasoning {
+	case "none", "low", "medium", "high", "xhigh", "omit":
+	default:
+		return fmt.Errorf("grok.gate_reasoning must be none, low, medium, high, xhigh, or omit")
 	}
 	if !strings.HasPrefix(c.STT.AuthPath, "/") || strings.Contains(c.STT.AuthPath, "..") {
 		return fmt.Errorf("stt.auth_path must be an absolute container path")

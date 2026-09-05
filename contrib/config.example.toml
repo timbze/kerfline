@@ -18,6 +18,11 @@ drain_on_start = true
 always_approve = true
 disallowed_tools = ["web_fetch"]
 timeout = "10m"
+# gate = true
+# gate_model = "grok-4.3"
+# gate_timeout = "15s"
+# none | low | medium | high | xhigh | omit (omit = do not send the field)
+# gate_reasoning = "none"
 
 [jailbee]
 binary = "jailbee"
