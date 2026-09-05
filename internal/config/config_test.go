@@ -393,6 +393,12 @@ func TestGateDefaults(t *testing.T) {
 	if cfg.Grok.GateReasoning != "none" {
 		t.Fatalf("GateReasoning = %q, want none", cfg.Grok.GateReasoning)
 	}
+	if cfg.Grok.GateSpeechMax != "2m" {
+		t.Fatalf("GateSpeechMax = %q, want 2m", cfg.Grok.GateSpeechMax)
+	}
+	if cfg.Grok.SpeechMax() != 2*time.Minute {
+		t.Fatalf("SpeechMax = %s, want 2m", cfg.Grok.SpeechMax())
+	}
 }
 
 func TestGateOverride(t *testing.T) {
@@ -404,6 +410,7 @@ gate = true
 gate_model = "grok-4"
 gate_timeout = "30s"
 gate_reasoning = "HIGH"
+gate_speech_max = "90s"
 `,
 		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
 	})
@@ -425,6 +432,12 @@ gate_reasoning = "HIGH"
 	}
 	if cfg.Grok.GateReasoning != "high" {
 		t.Fatalf("GateReasoning = %q, want lowercase high", cfg.Grok.GateReasoning)
+	}
+	if cfg.Grok.GateSpeechMax != "90s" {
+		t.Fatalf("GateSpeechMax = %q", cfg.Grok.GateSpeechMax)
+	}
+	if cfg.Grok.SpeechMax() != 90*time.Second {
+		t.Fatalf("SpeechMax = %s, want 90s", cfg.Grok.SpeechMax())
 	}
 }
 
@@ -474,6 +487,32 @@ gate_reasoning = "extreme"
 	})
 	if _, err := Load(dir); err == nil {
 		t.Fatal("expected invalid gate_reasoning error")
+	}
+}
+
+func TestGateInvalidSpeechMax(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate_speech_max = "soon"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected invalid gate_speech_max error")
+	}
+
+	dir = writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+gate_speech_max = "0s"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err == nil {
+		t.Fatal("expected gate_speech_max > 0 error")
 	}
 }
 

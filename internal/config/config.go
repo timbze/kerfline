@@ -73,6 +73,7 @@ type Grok struct {
 	GateModel       string   `toml:"gate_model"`
 	GateTimeout     string   `toml:"gate_timeout"`
 	GateReasoning   string   `toml:"gate_reasoning"`
+	GateSpeechMax   string   `toml:"gate_speech_max"`
 }
 
 // GateEnabled is true unless gate is explicitly false.
@@ -81,6 +82,18 @@ func (g Grok) GateEnabled() bool {
 		return true
 	}
 	return *g.Gate
+}
+
+// SpeechMax is the longest voice/audio clip transcribed before the reply gate.
+func (g Grok) SpeechMax() time.Duration {
+	if g.GateSpeechMax == "" {
+		return 2 * time.Minute
+	}
+	d, err := time.ParseDuration(g.GateSpeechMax)
+	if err != nil || d <= 0 {
+		return 2 * time.Minute
+	}
+	return d
 }
 
 type Jailbee struct {
@@ -206,6 +219,9 @@ func applyDefaults(cfg *Config) {
 		cfg.Grok.GateReasoning = "none"
 	}
 	cfg.Grok.GateReasoning = strings.ToLower(cfg.Grok.GateReasoning)
+	if cfg.Grok.GateSpeechMax == "" {
+		cfg.Grok.GateSpeechMax = "2m"
+	}
 	if cfg.Jailbee.Binary == "" {
 		cfg.Jailbee.Binary = "jailbee"
 	}
@@ -308,6 +324,11 @@ func (c *Config) validate() error {
 	}
 	if _, err := time.ParseDuration(c.Grok.GateTimeout); err != nil {
 		return fmt.Errorf("grok.gate_timeout: %w", err)
+	}
+	if d, err := time.ParseDuration(c.Grok.GateSpeechMax); err != nil {
+		return fmt.Errorf("grok.gate_speech_max: %w", err)
+	} else if d <= 0 {
+		return fmt.Errorf("grok.gate_speech_max must be > 0")
 	}
 	switch c.Grok.GateReasoning {
 	case "none", "low", "medium", "high", "xhigh", "omit":

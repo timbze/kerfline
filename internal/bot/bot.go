@@ -29,6 +29,8 @@ type gater interface {
 
 type turnExec interface {
 	StartTyping() (stop func())
+	PrepareSpeech(ctx context.Context) error
+	SpeechTranscript() string
 	Download() error
 	Run() error
 }
@@ -223,7 +225,7 @@ func (b *Bot) onUserMessage(tg *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	prompt, want := BuildGrokPrompt(msg, tg.Username, chat.RequireMention)
-	if !want {
+	if !want && !gateShortSpeech(b.cfg, chat, msg, tg.Username) {
 		return nil
 	}
 	return b.orchestrate(context.Background(), chat, msg, prompt, tg.Username, &liveTurn{
@@ -246,6 +248,58 @@ func gateApplies(cfg *config.Config, chat config.Chat, text, botUsername string)
 		return false
 	}
 	return true
+}
+
+func messageSpeech(msg *gotgbot.Message) (time.Duration, bool) {
+	if msg == nil {
+		return 0, false
+	}
+	if msg.Voice != nil {
+		return time.Duration(msg.Voice.Duration) * time.Second, true
+	}
+	if msg.Audio != nil {
+		return time.Duration(msg.Audio.Duration) * time.Second, true
+	}
+	return 0, false
+}
+
+func shortSpeech(msg *gotgbot.Message, max time.Duration) bool {
+	d, ok := messageSpeech(msg)
+	if !ok || d <= 0 || max <= 0 {
+		return false
+	}
+	return d <= max
+}
+
+func gateShortSpeech(cfg *config.Config, chat config.Chat, msg *gotgbot.Message, botUsername string) bool {
+	if msg == nil || !gateApplies(cfg, chat, msg.GetText(), botUsername) {
+		return false
+	}
+	max := 2 * time.Minute
+	if cfg != nil {
+		max = cfg.Grok.SpeechMax()
+	}
+	return shortSpeech(msg, max)
+}
+
+func gateUserText(msg *gotgbot.Message, transcript string) string {
+	text := ""
+	if msg != nil {
+		text = msg.GetText()
+	}
+	userText, ok := PromptFromMessage(text, "", false)
+	if !ok || userText == "" {
+		userText = strings.TrimSpace(text)
+	}
+	tr := strings.TrimSpace(transcript)
+	switch {
+	case tr == "":
+		return userText
+	case userText == "":
+		return tr
+	default:
+		return userText + "\n" + tr
+	}
 }
 
 func chatIsPrivate(msg *gotgbot.Message) bool {
@@ -278,13 +332,32 @@ func readWorkspaceHint(workspace string) string {
 }
 
 func (b *Bot) orchestrate(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt, botUsername string, exec turnExec) error {
+	var speechText string
+	if gateShortSpeech(b.cfg, chat, msg, botUsername) {
+		start := time.Now()
+		err := exec.PrepareSpeech(ctx)
+		if b.log != nil {
+			attrs := []any{"chat", chat.Name, "duration", time.Since(start)}
+			if err != nil {
+				attrs = append(attrs, "err", err)
+				b.log.Error("gate speech", attrs...)
+			} else {
+				b.log.Info("gate speech", attrs...)
+			}
+		}
+		if err != nil {
+			return nil
+		}
+		speechText = exec.SpeechTranscript()
+	}
+
 	if gateApplies(b.cfg, chat, msg.GetText(), botUsername) {
 		start := time.Now()
 		g := b.gate
 		if g == nil {
 			g = &replyGate{bot: b}
 		}
-		d, err := g.Decide(ctx, chat, msg, prompt)
+		d, err := g.Decide(ctx, chat, msg, gateUserText(msg, speechText))
 		decision := "reply"
 		if err != nil {
 			decision = "error"
@@ -342,9 +415,14 @@ func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.M
 		return gate.Skip, err
 	}
 
-	userText, ok := PromptFromMessage(text, "", false)
-	if !ok || userText == "" {
-		userText = strings.TrimSpace(text)
+	userText := strings.TrimSpace(prompt)
+	if userText == "" {
+		extracted, ok := PromptFromMessage(text, "", false)
+		if !ok || extracted == "" {
+			userText = strings.TrimSpace(text)
+		} else {
+			userText = extracted
+		}
 	}
 
 	client := &gate.Client{Token: token, Timeout: timeout}
@@ -367,26 +445,53 @@ func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.M
 }
 
 type liveTurn struct {
-	bot        *Bot
-	tg         *gotgbot.Bot
-	msg        *gotgbot.Message
-	chat       config.Chat
-	prompt     string
-	req        runner.Request
-	mediaAttrs []any
-	aborted    bool
+	bot            *Bot
+	tg             *gotgbot.Bot
+	msg            *gotgbot.Message
+	chat           config.Chat
+	prompt         string
+	req            runner.Request
+	mediaAttrs     []any
+	aborted        bool
+	speechPrepared bool
+	transcript     media.Transcript
 }
 
 func (t *liveTurn) StartTyping() func() {
 	return keepTyping(t.tg, t.msg)
 }
 
+func (t *liveTurn) PrepareSpeech(ctx context.Context) error {
+	if t.speechPrepared {
+		return nil
+	}
+	if err := t.stageMedia(ctx, true); err != nil {
+		return err
+	}
+	t.speechPrepared = true
+	return nil
+}
+
+func (t *liveTurn) SpeechTranscript() string {
+	return strings.TrimSpace(t.transcript.Text)
+}
+
 func (t *liveTurn) Download() error {
+	if t.speechPrepared {
+		return nil
+	}
+	return t.stageMedia(context.Background(), false)
+}
+
+func (t *liveTurn) stageMedia(ctx context.Context, silent bool) error {
 	b := t.bot
 	tg := t.tg
 	msg := t.msg
 	chat := t.chat
 	if inaccessibleReplyMedia(msg) {
+		if silent {
+			return fmt.Errorf("media gone")
+		}
 		_, err := msg.Reply(tg, "I don't have that file anymore; send it again.", replyOpts(msg))
 		t.aborted = true
 		return err
@@ -404,16 +509,28 @@ func (t *liveTurn) Download() error {
 		_, skipLook := media.AttachVision(class, ref.MIME, vision)
 		if skipLook {
 			b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
+			if silent {
+				return fmt.Errorf("look disabled")
+			}
 			_, err := msg.Reply(tg, "Looking at pictures is off for this chat.", replyOpts(msg))
 			t.aborted = true
 			return err
 		}
 	}
-	dlCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	dlTimeout := 90 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		if remain := time.Until(deadline); remain > 0 && remain < dlTimeout {
+			dlTimeout = remain
+		}
+	}
+	dlCtx, cancel := context.WithTimeout(ctx, dlTimeout)
 	staged, err := b.media.Materialize(dlCtx, chat, *ref, b.cfg.Media.MaxFileBytes, b.cfg.InboxTTL())
 	cancel()
 	if err != nil {
 		b.log.Error("media download", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+		if silent {
+			return err
+		}
 		_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
 		t.aborted = true
 		return sendErr
@@ -427,11 +544,15 @@ func (t *liveTurn) Download() error {
 	promptLine := media.VisionPromptLine(class, ref.MIME, false)
 	if speech {
 		promptLine = media.SpeechPromptLine()
-		sttCtx, sttCancel := context.WithTimeout(context.Background(), b.cfg.STTTimeout())
+		sttTimeout := b.cfg.STTTimeout()
+		sttCtx, sttCancel := context.WithTimeout(ctx, sttTimeout)
 		tr, err := b.transcribeStaged(sttCtx, chat, staged)
 		sttCancel()
 		if err != nil {
 			b.log.Error("stt", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+			if silent {
+				return err
+			}
 			_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
 			t.aborted = true
 			return sendErr
@@ -441,6 +562,7 @@ func (t *liveTurn) Download() error {
 			"language", tr.Language,
 			"duration", tr.Duration,
 			"chars", len(tr.Text))
+		t.transcript = tr
 		t.req.Prompt += media.FormatTranscript(tr)
 	}
 	t.req.Prompt += media.FormatAttachment(staged, promptLine)
@@ -463,9 +585,10 @@ func (t *liveTurn) Run() error {
 	if msg.MessageThreadId != 0 {
 		attrs = append(attrs, "topic_id", msg.MessageThreadId)
 	}
+	sessionID, resume := b.sess.ID(chat.Name)
+	attrs = append(attrs, "session", sessionID, "resume", resume)
 	b.log.Info("grok turn", attrs...)
 
-	sessionID, resume := b.sess.ID(chat.Name)
 	res, err := b.runner.Run(context.Background(), b.cfg, chat, t.req, sessionID, resume)
 	if err != nil {
 		b.log.Error("grok failed", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token), "duration", res.Duration)

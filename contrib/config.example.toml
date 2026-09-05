@@ -23,6 +23,8 @@ timeout = "10m"
 # gate_timeout = "15s"
 # none | low | medium | high | xhigh | omit (omit = do not send the field)
 # gate_reasoning = "none"
+# Voice/audio at or under this length is transcribed before the gate (require_mention = false).
+# gate_speech_max = "2m"
 
 [jailbee]
 binary = "jailbee"

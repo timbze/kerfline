@@ -79,7 +79,7 @@ systemctl --user enable --now kerfline
 - **DMs:** keep `require_mention = false`. The same gate applies unless `[grok].gate = false`, which restores always-on full turns.
 - **Explicit `/ask` and `@botusername`:** skip the gate (typing + full turn immediately).
 
-Optional knobs in `contrib/config.example.toml` under `[grok]`: `gate`, `gate_model`, `gate_timeout`, `gate_reasoning` (`none` | `low` | `medium` | `high` | `xhigh` | `omit`). Defaults: model `grok-4.3`, reasoning `none`. Use `omit` to leave `reasoning_effort` off the request for models that do not accept `none`.
+Optional knobs in `contrib/config.example.toml` under `[grok]`: `gate`, `gate_model`, `gate_timeout`, `gate_reasoning` (`none` | `low` | `medium` | `high` | `xhigh` | `omit`), `gate_speech_max` (default `2m`). Defaults: model `grok-4.3`, reasoning `none`. Use `omit` to leave `reasoning_effort` off the request for models that do not accept `none`.
 
 ## Photos, documents, and voice
 
@@ -91,7 +91,7 @@ Kerfline can file Telegram photos and documents into the chat’s git workspace 
 - Telegram **photos** are compressed JPEGs. For an archival scan, send it as a **document**.
 - Looking at a picture (vision) is not enabled yet. Until it is, “what does this show?” still stages the file and asks Grok to file from the text, without attaching pixels.
 
-Voice notes and audio work the same trigger: caption `/ask …`, or **reply** to the voice note with `/ask …` (or unadorned text in a DM). Bare voice notes are ignored. Kerfline downloads the OGG, transcribes it with Grok STT (SuperGrok login inside the JailBee container, or `XAI_API_KEY`), and puts the transcript in the Grok prompt. Grok does not listen to the file.
+Voice notes and audio: caption `/ask …`, or **reply** to the clip with `/ask …` (or unadorned text in a DM). In chats with `require_mention = false`, a clip at or under `gate_speech_max` (default two minutes) is transcribed and sent through the reply gate even with no caption; if the gate says reply, that same transcript is reused for the Grok turn (no second STT). Longer bare clips are still ignored. Kerfline downloads the OGG, transcribes it with Grok STT (SuperGrok login inside the JailBee container, or `XAI_API_KEY`), and puts the transcript in the Grok prompt. Grok does not listen to the file.
 
 Grok can send a workspace file back in the reply with a Markdown image whose path is in that chat’s repo:
 

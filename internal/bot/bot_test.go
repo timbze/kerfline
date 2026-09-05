@@ -196,23 +196,36 @@ func TestTypingLoopSendsUntilCancel(t *testing.T) {
 }
 
 type stubGater struct {
-	called int
-	d      gate.Decision
-	err    error
+	called       int
+	d            gate.Decision
+	err          error
+	lastUserText string
 }
 
-func (s *stubGater) Decide(context.Context, config.Chat, *gotgbot.Message, string) (gate.Decision, error) {
+func (s *stubGater) Decide(_ context.Context, _ config.Chat, _ *gotgbot.Message, userText string) (gate.Decision, error) {
 	s.called++
+	s.lastUserText = userText
 	return s.d, s.err
 }
 
 type recordingExec struct {
-	events []string
+	events     []string
+	transcript string
+	speechErr  error
 }
 
 func (r *recordingExec) StartTyping() func() {
 	r.events = append(r.events, "typing")
 	return func() { r.events = append(r.events, "typing-stop") }
+}
+
+func (r *recordingExec) PrepareSpeech(context.Context) error {
+	r.events = append(r.events, "speech")
+	return r.speechErr
+}
+
+func (r *recordingExec) SpeechTranscript() string {
+	return r.transcript
 }
 
 func (r *recordingExec) Download() error {
@@ -247,6 +260,15 @@ func privateMsg(text string) *gotgbot.Message {
 		Text: text,
 		From: &gotgbot.User{Id: 42},
 		Chat: gotgbot.Chat{Id: 42, Type: gotgbot.ChatTypePrivate},
+	}
+}
+
+func voiceMsg(seconds int, caption string) *gotgbot.Message {
+	return &gotgbot.Message{
+		Caption: caption,
+		Voice:   &gotgbot.Voice{FileId: "v", Duration: int64(seconds)},
+		From:    &gotgbot.User{Id: 42},
+		Chat:    gotgbot.Chat{Id: -1001, Type: gotgbot.ChatTypeGroup},
 	}
 }
 
@@ -536,5 +558,159 @@ func TestReplyGateWorkspaceHintReadErrorEmpty(t *testing.T) {
 	}
 	if !strings.Contains(userContent, "workspace_hint:\n") {
 		t.Fatalf("expected empty workspace_hint block, got %q", userContent)
+	}
+}
+
+func TestShortSpeech(t *testing.T) {
+	max := 2 * time.Minute
+	if shortSpeech(groupMsg("hi"), max) {
+		t.Fatal("text is not speech")
+	}
+	if !shortSpeech(voiceMsg(30, ""), max) {
+		t.Fatal("30s voice should be short")
+	}
+	if !shortSpeech(voiceMsg(120, ""), max) {
+		t.Fatal("120s voice should be at the max")
+	}
+	if shortSpeech(voiceMsg(121, ""), max) {
+		t.Fatal("121s voice should be long")
+	}
+	if shortSpeech(voiceMsg(0, ""), max) {
+		t.Fatal("zero duration should not count")
+	}
+	audio := voiceMsg(45, "")
+	audio.Voice = nil
+	audio.Audio = &gotgbot.Audio{FileId: "a", Duration: 45}
+	if !shortSpeech(audio, max) {
+		t.Fatal("45s audio should be short")
+	}
+}
+
+func TestGateShortSpeech(t *testing.T) {
+	cfg := &config.Config{}
+	chat := config.Chat{Name: "notes"}
+	if !gateShortSpeech(cfg, chat, voiceMsg(30, ""), "notesbot") {
+		t.Fatal("short bare voice should open the gate speech path")
+	}
+	if gateShortSpeech(cfg, chat, voiceMsg(180, ""), "notesbot") {
+		t.Fatal("long bare voice should not")
+	}
+	if gateShortSpeech(cfg, config.Chat{RequireMention: true}, voiceMsg(30, ""), "notesbot") {
+		t.Fatal("require_mention skips gate speech")
+	}
+	if gateShortSpeech(cfg, chat, voiceMsg(30, "/ask save this"), "notesbot") {
+		t.Fatal("/ask voice bypasses the gate, so no pre-gate STT")
+	}
+	off := false
+	cfg.Grok.Gate = &off
+	if gateShortSpeech(cfg, chat, voiceMsg(30, ""), "notesbot") {
+		t.Fatal("gate disabled")
+	}
+}
+
+func TestGateUserText(t *testing.T) {
+	if got := gateUserText(groupMsg("buy milk"), ""); got != "buy milk" {
+		t.Fatalf("got %q", got)
+	}
+	if got := gateUserText(voiceMsg(30, ""), "buy milk"); got != "buy milk" {
+		t.Fatalf("transcript only: %q", got)
+	}
+	if got := gateUserText(voiceMsg(30, "also eggs"), "buy milk"); got != "also eggs\nbuy milk" {
+		t.Fatalf("caption+transcript: %q", got)
+	}
+}
+
+func TestOrchestrateShortVoiceSkipNoTyping(t *testing.T) {
+	g := &stubGater{d: gate.Skip}
+	b := silentBot(t, g)
+	exec := &recordingExec{transcript: "buy milk"}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, voiceMsg(30, ""), "", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.called != 1 {
+		t.Fatalf("gate called %d times, want 1", g.called)
+	}
+	if g.lastUserText != "buy milk" {
+		t.Fatalf("gate user text %q", g.lastUserText)
+	}
+	assertEvents(t, exec.events, []string{"speech"})
+	for _, e := range exec.events {
+		if e == "typing" || e == "download" || e == "run" {
+			t.Fatalf("skip must not type/download/run, got %v", exec.events)
+		}
+	}
+}
+
+func TestOrchestrateShortVoiceReplyReusesTranscript(t *testing.T) {
+	g := &stubGater{d: gate.Reply}
+	b := silentBot(t, g)
+	exec := &recordingExec{transcript: "buy milk"}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, voiceMsg(30, "please"), "please", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.lastUserText != "please\nbuy milk" {
+		t.Fatalf("gate user text %q", g.lastUserText)
+	}
+	assertEvents(t, exec.events, []string{"speech", "typing", "download", "run"})
+}
+
+func TestOrchestrateLongVoiceNoSpeechPrep(t *testing.T) {
+	g := &stubGater{d: gate.Skip}
+	b := silentBot(t, g)
+	exec := &recordingExec{transcript: "should not be used"}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, voiceMsg(180, "lol"), "lol", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.lastUserText != "lol" {
+		t.Fatalf("long voice gates on caption only, got %q", g.lastUserText)
+	}
+	for _, e := range exec.events {
+		if e == "speech" {
+			t.Fatalf("long voice must not transcribe before gate, got %v", exec.events)
+		}
+	}
+}
+
+func TestOrchestrateAskVoiceNoSpeechPrep(t *testing.T) {
+	g := &stubGater{d: gate.Skip}
+	b := silentBot(t, g)
+	exec := &recordingExec{}
+	msg := voiceMsg(30, "/ask save this")
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, msg, "save this", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.called != 0 {
+		t.Fatalf("gate ran for /ask voice: %d", g.called)
+	}
+	assertEvents(t, exec.events, []string{"typing", "download", "run"})
+}
+
+func TestOrchestrateShortVoiceSTTErrorSilent(t *testing.T) {
+	g := &stubGater{d: gate.Reply}
+	b := silentBot(t, g)
+	exec := &recordingExec{speechErr: errors.New("stt failed")}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, voiceMsg(30, ""), "", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.called != 0 {
+		t.Fatalf("gate must not run after STT error, called %d", g.called)
+	}
+	assertEvents(t, exec.events, []string{"speech"})
+	for _, e := range exec.events {
+		if e == "typing" || e == "download" || e == "run" {
+			t.Fatalf("STT error must skip the turn, got %v", exec.events)
+		}
+	}
+}
+
+func TestLiveTurnDownloadSkipsAfterPrepare(t *testing.T) {
+	turn := &liveTurn{speechPrepared: true}
+	if err := turn.Download(); err != nil {
+		t.Fatal(err)
 	}
 }
