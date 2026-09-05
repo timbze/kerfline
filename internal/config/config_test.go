@@ -338,6 +338,18 @@ func TestDefaultRulesForbidPersonalNames(t *testing.T) {
 	}
 }
 
+func TestDefaultRulesOmitDestPathsInChat(t *testing.T) {
+	if !strings.Contains(DefaultRules, "Saved work") {
+		t.Fatal("DefaultRules must have a Saved work section")
+	}
+	if !strings.Contains(DefaultRules, "Information saved") {
+		t.Fatal("DefaultRules must tell Grok to say Information saved")
+	}
+	if !strings.Contains(DefaultRules, "do not print dest paths") && !strings.Contains(DefaultRules, "Do not print dest paths") && !strings.Contains(DefaultRules, "Never put workspace dest paths") {
+		t.Fatal("DefaultRules must forbid dest paths in Telegram chat")
+	}
+}
+
 func TestDefaultRulesIncludeAck(t *testing.T) {
 	if !strings.Contains(DefaultRules, "👍") {
 		t.Fatal("DefaultRules must tell Grok to print 👍 for informational saves")
