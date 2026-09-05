@@ -66,6 +66,25 @@ func BuildGrokPrompt(msg *gotgbot.Message, botUsername string, requireMention bo
 	return quoted + "\n\nUser:\n" + userText, true
 }
 
+// ExplicitlyAddressed reports whether text is a /ask (or /ask@bot) with a
+// non-empty prompt, or contains @botUsername with other text remaining.
+// Empty /ask and bare @bot are false (see addressedWithoutPrompt).
+func ExplicitlyAddressed(text, botUsername string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	if cmd, rest, isCmd := splitCommand(text); isCmd {
+		return cmd == "ask" && strings.TrimSpace(rest) != ""
+	}
+	if botUsername == "" {
+		return false
+	}
+	mention := "@" + strings.TrimPrefix(botUsername, "@")
+	stripped, found := stripMention(text, mention)
+	return found && strings.TrimSpace(stripped) != ""
+}
+
 func addressedWithoutPrompt(text, botUsername string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
