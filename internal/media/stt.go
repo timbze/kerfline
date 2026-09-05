@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -83,7 +84,7 @@ func (s *STT) Transcribe(ctx context.Context, token string, r io.Reader, filenam
 		return Transcript{}, &StageError{Reason: "stt", Msg: "Couldn't transcribe that voice note."}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Transcript{}, &StageError{Reason: "stt", Msg: "Couldn't transcribe that voice note."}
+		return Transcript{}, sttHTTPError(resp.StatusCode, body)
 	}
 	var out struct {
 		Text     string  `json:"text"`
@@ -94,6 +95,41 @@ func (s *STT) Transcribe(ctx context.Context, token string, r io.Reader, filenam
 		return Transcript{}, &StageError{Reason: "stt", Msg: "Couldn't transcribe that voice note."}
 	}
 	return Transcript{Text: out.Text, Language: out.Language, Duration: out.Duration}, nil
+}
+
+const maxHTTPErrorBodyBytes = 200
+const sttUserMsg = "Couldn't transcribe that voice note."
+
+type HTTPError struct {
+	Status int
+	Body   string
+}
+
+func (e *HTTPError) Error() string {
+	if e == nil {
+		return "stt: http 0"
+	}
+	if e.Body == "" {
+		return fmt.Sprintf("stt: http %d", e.Status)
+	}
+	return fmt.Sprintf("stt: http %d: %s", e.Status, e.Body)
+}
+
+func (e *HTTPError) Unwrap() error {
+	return &StageError{Reason: "stt", Msg: sttUserMsg}
+}
+
+func AuthHTTP(err error) bool {
+	var h *HTTPError
+	return errors.As(err, &h) && (h.Status == http.StatusUnauthorized || h.Status == http.StatusForbidden)
+}
+
+func sttHTTPError(status int, body []byte) error {
+	snippet := body
+	if len(snippet) > maxHTTPErrorBodyBytes {
+		snippet = snippet[:maxHTTPErrorBodyBytes]
+	}
+	return &HTTPError{Status: status, Body: string(snippet)}
 }
 
 func TokenFromEnvOrAuth(envKey string, authJSON []byte) (string, error) {

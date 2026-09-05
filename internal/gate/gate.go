@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,14 +84,7 @@ func ShouldReply(ctx context.Context, c *Client, in Input) (Decision, error) {
 		return Skip, fmt.Errorf("gate: read body: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet := respBody
-		if len(snippet) > maxHTTPErrorBodyBytes {
-			snippet = snippet[:maxHTTPErrorBodyBytes]
-		}
-		if len(snippet) == 0 {
-			return Skip, fmt.Errorf("gate: http %d", resp.StatusCode)
-		}
-		return Skip, fmt.Errorf("gate: http %d: %s", resp.StatusCode, snippet)
+		return Skip, httpError(resp.StatusCode, respBody)
 	}
 
 	var out struct {
@@ -124,6 +118,34 @@ func ShouldReply(ctx context.Context, c *Client, in Input) (Decision, error) {
 		return Reply, nil
 	}
 	return Skip, nil
+}
+
+type HTTPError struct {
+	Status int
+	Body   string
+}
+
+func (e *HTTPError) Error() string {
+	if e == nil {
+		return "gate: http 0"
+	}
+	if e.Body == "" {
+		return fmt.Sprintf("gate: http %d", e.Status)
+	}
+	return fmt.Sprintf("gate: http %d: %s", e.Status, e.Body)
+}
+
+func AuthHTTP(err error) bool {
+	var h *HTTPError
+	return errors.As(err, &h) && (h.Status == http.StatusUnauthorized || h.Status == http.StatusForbidden)
+}
+
+func httpError(status int, body []byte) error {
+	snippet := body
+	if len(snippet) > maxHTTPErrorBodyBytes {
+		snippet = snippet[:maxHTTPErrorBodyBytes]
+	}
+	return &HTTPError{Status: status, Body: string(snippet)}
 }
 
 func buildRequestBody(c *Client, in Input) ([]byte, error) {

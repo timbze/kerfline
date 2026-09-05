@@ -73,6 +73,36 @@ func TestShouldReplyHTTP500(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	if AuthHTTP(err) {
+		t.Fatalf("500 must not be auth: %v", err)
+	}
+}
+
+func TestShouldReplyForbiddenIsAuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"unauthenticated:bad-credentials","error":"The OAuth2 access token could not be validated."}`))
+	}))
+	defer srv.Close()
+
+	_, err := ShouldReply(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+	}, Input{UserText: "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !AuthHTTP(err) {
+		t.Fatalf("want auth http error, got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "403") {
+		t.Fatalf("error missing status: %q", msg)
+	}
+	if !strings.Contains(msg, "unauthenticated:bad-credentials") {
+		t.Fatalf("error missing body: %q", msg)
+	}
 }
 
 func TestShouldReplyHTTP400IncludesBody(t *testing.T) {

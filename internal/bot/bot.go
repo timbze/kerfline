@@ -435,13 +435,29 @@ func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.M
 		client.Reasoning = "none"
 	}
 
-	return gate.ShouldReply(ctx, client, gate.Input{
+	in := gate.Input{
 		ChatName:      chat.Name,
 		Private:       chatIsPrivate(msg),
 		WorkspaceHint: readWorkspaceHint(chat.Workspace),
 		Quoted:        replyContext(msg),
 		UserText:      userText,
-	})
+	}
+	d, err := gate.ShouldReply(ctx, client, in)
+	if err == nil || !gate.AuthHTTP(err) || !g.bot.canRefreshAuth() {
+		return d, err
+	}
+	if rerr := g.bot.refreshGrokAuth(ctx, chat); rerr != nil {
+		if g.bot.log != nil {
+			g.bot.log.Error("auth refresh", "chat", chat.Name, "err", rerr)
+		}
+		return d, err
+	}
+	token, err = g.bot.authToken(ctx, chat)
+	if err != nil {
+		return d, err
+	}
+	client.Token = token
+	return gate.ShouldReply(ctx, client, in)
 }
 
 type liveTurn struct {
@@ -635,6 +651,20 @@ func (b *Bot) ackMessage(tg *gotgbot.Bot, msg *gotgbot.Message) error {
 }
 
 func (b *Bot) transcribeStaged(ctx context.Context, chat config.Chat, staged media.StagedFile) (media.Transcript, error) {
+	tr, err := b.transcribeStagedOnce(ctx, chat, staged)
+	if err == nil || !media.AuthHTTP(err) || !b.canRefreshAuth() {
+		return tr, err
+	}
+	if rerr := b.refreshGrokAuth(ctx, chat); rerr != nil {
+		if b.log != nil {
+			b.log.Error("auth refresh", "chat", chat.Name, "err", rerr)
+		}
+		return tr, err
+	}
+	return b.transcribeStagedOnce(ctx, chat, staged)
+}
+
+func (b *Bot) transcribeStagedOnce(ctx context.Context, chat config.Chat, staged media.StagedFile) (media.Transcript, error) {
 	token, err := b.sttToken(ctx, chat)
 	if err != nil {
 		return media.Transcript{}, &media.StageError{Reason: "stt", Msg: "Couldn't transcribe that voice note."}
@@ -650,6 +680,17 @@ func (b *Bot) transcribeStaged(ctx context.Context, chat config.Chat, staged med
 
 func (b *Bot) sttToken(ctx context.Context, chat config.Chat) (string, error) {
 	return b.authToken(ctx, chat)
+}
+
+func (b *Bot) canRefreshAuth() bool {
+	return b != nil && b.runner != nil && strings.TrimSpace(os.Getenv("XAI_API_KEY")) == ""
+}
+
+func (b *Bot) refreshGrokAuth(ctx context.Context, chat config.Chat) error {
+	if b.log != nil {
+		b.log.Info("auth refresh", "chat", chat.Name)
+	}
+	return b.runner.RefreshGrokAuth(ctx, b.cfg, chat)
 }
 
 func (b *Bot) authToken(ctx context.Context, chat config.Chat) (string, error) {

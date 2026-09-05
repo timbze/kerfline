@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"kerfline/internal/config"
 	"kerfline/internal/gate"
 	"kerfline/internal/media"
+	"kerfline/internal/runner"
 )
 
 func TestSTTTokenPrefersEnv(t *testing.T) {
@@ -60,6 +62,150 @@ func TestTranscribeStaged(t *testing.T) {
 	if tr.Text != "buy milk" || tr.Language != "en" {
 		t.Fatalf("%+v", tr)
 	}
+}
+
+func TestTranscribeStagedRefreshesOn403(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "")
+	var auths []string
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		n++
+		if n == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"unauthenticated:bad-credentials"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"text":"buy milk","language":"en","duration":2.5}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "77-voice.ogg")
+	if err := os.WriteFile(abs, []byte("ogg-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var refresh int
+	var cmds []string
+	b := &Bot{
+		cfg:    &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}, STT: config.STT{AuthPath: "/home/dev/.grok/auth.json"}},
+		stt:    &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
+		runner: fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds),
+		log:    slog.New(slog.DiscardHandler),
+	}
+	tr, err := b.transcribeStaged(context.Background(), config.Chat{Workspace: dir, JailbeeContainer: "main"}, media.StagedFile{
+		AbsPath: abs,
+		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
+		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Text != "buy milk" {
+		t.Fatalf("%+v", tr)
+	}
+	if refresh != 1 {
+		t.Fatalf("refresh %d, want 1; cmds=%v", refresh, cmds)
+	}
+	if len(auths) != 2 || auths[0] != "Bearer old-tok" || auths[1] != "Bearer new-tok" {
+		t.Fatalf("auths %v", auths)
+	}
+}
+
+func TestTranscribeStagedEnvKeySkipsRefresh(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "env-tok")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"unauthenticated:bad-credentials"}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "77-voice.ogg")
+	if err := os.WriteFile(abs, []byte("ogg-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var refresh int
+	var cmds []string
+	b := &Bot{
+		cfg:    &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}, STT: config.STT{AuthPath: "/home/dev/.grok/auth.json"}},
+		stt:    &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
+		runner: fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds),
+		log:    slog.New(slog.DiscardHandler),
+	}
+	_, err := b.transcribeStaged(context.Background(), config.Chat{Workspace: dir, JailbeeContainer: "main"}, media.StagedFile{
+		AbsPath: abs,
+		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
+		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if refresh != 0 {
+		t.Fatalf("env key must not refresh, got %d cmds=%v", refresh, cmds)
+	}
+	if media.UserMessage(err) != "Couldn't transcribe that voice note." {
+		t.Fatalf("user msg %q", media.UserMessage(err))
+	}
+}
+
+func TestTranscribeStagedServerErrorSkipsRefresh(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "77-voice.ogg")
+	if err := os.WriteFile(abs, []byte("ogg-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var refresh int
+	var cmds []string
+	b := &Bot{
+		cfg:    &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}, STT: config.STT{AuthPath: "/home/dev/.grok/auth.json"}},
+		stt:    &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
+		runner: fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds),
+		log:    slog.New(slog.DiscardHandler),
+	}
+	_, err := b.transcribeStaged(context.Background(), config.Chat{Workspace: dir, JailbeeContainer: "main"}, media.StagedFile{
+		AbsPath: abs,
+		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
+		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if refresh != 0 {
+		t.Fatalf("500 must not refresh, got %d cmds=%v", refresh, cmds)
+	}
+}
+
+func fakeAuthRunner(t *testing.T, oldTok, newTok string, refresh *int, cmds *[]string) *runner.Runner {
+	t.Helper()
+	cats := 0
+	r := runner.New()
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		joined := strings.Join(args, " ")
+		*cmds = append(*cmds, joined)
+		switch {
+		case strings.Contains(joined, "grok models"):
+			*refresh++
+			return exec.CommandContext(ctx, "true")
+		case strings.Contains(joined, "cat --"):
+			cats++
+			tok := oldTok
+			if cats > 1 {
+				tok = newTok
+			}
+			body := `{"https://auth.x.ai::x":{"key":"` + tok + `","create_time":"2026-01-01T00:00:00Z"}}`
+			return exec.CommandContext(ctx, "printf", "%s", body)
+		default:
+			t.Fatalf("unexpected jailbee args: %q", joined)
+			return exec.CommandContext(ctx, "false")
+		}
+	}
+	return r
 }
 
 func TestFormatChatIDReply(t *testing.T) {
@@ -558,6 +704,49 @@ func TestReplyGateWorkspaceHintReadErrorEmpty(t *testing.T) {
 	}
 	if !strings.Contains(userContent, "workspace_hint:\n") {
 		t.Fatalf("expected empty workspace_hint block, got %q", userContent)
+	}
+}
+
+func TestReplyGateRefreshesOn403(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "")
+	var auths []string
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.Header.Get("Authorization"))
+		n++
+		if n == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"unauthenticated:bad-credentials"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"respond\":true}"}}]}`))
+	}))
+	defer srv.Close()
+
+	var refresh int
+	var cmds []string
+	b := silentBot(t, nil)
+	b.cfg.Jailbee.Binary = "jailbee"
+	b.cfg.STT.BaseURL = srv.URL
+	b.cfg.STT.AuthPath = "/home/dev/.grok/auth.json"
+	b.cfg.Grok.GateModel = "grok-4.3"
+	b.cfg.Grok.GateTimeout = "15s"
+	b.cfg.Grok.GateReasoning = "none"
+	b.runner = fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds)
+	g := &replyGate{bot: b}
+	d, err := g.Decide(context.Background(), config.Chat{Name: "notes", Workspace: t.TempDir(), JailbeeContainer: "main"}, groupMsg("buy milk"), "buy milk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d != gate.Reply {
+		t.Fatalf("got %v, want Reply", d)
+	}
+	if refresh != 1 {
+		t.Fatalf("refresh %d, want 1; cmds=%v", refresh, cmds)
+	}
+	if len(auths) != 2 || auths[0] != "Bearer old-tok" || auths[1] != "Bearer new-tok" {
+		t.Fatalf("auths %v", auths)
 	}
 }
 

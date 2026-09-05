@@ -147,6 +147,42 @@ func (r *Runner) ReadContainerFile(ctx context.Context, cfg *config.Config, chat
 	return stdout.Bytes(), nil
 }
 
+func (r *Runner) RefreshGrokAuth(ctx context.Context, cfg *config.Config, chat config.Chat) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	bin := cfg.Jailbee.Binary
+	path, err := r.LookPath(bin)
+	if err != nil {
+		return fmt.Errorf("find %s: %w", bin, err)
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+	args := []string{
+		"exec",
+		"-c", chat.JailbeeConfig(),
+		chat.JailbeeContainer,
+		"--",
+		"grok", "models",
+	}
+	cmd := r.Command(ctx, path, args...)
+	cmd.Dir = chat.Workspace
+	cmd.Env = filteredEnv()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("jailbee exec: %w: %s", err, truncate(stderr.String(), 500))
+		}
+		return fmt.Errorf("jailbee exec: %w", err)
+	}
+	return nil
+}
+
 func filteredEnv() []string {
 	allow := map[string]struct{}{
 		"PATH": {}, "HOME": {}, "USER": {}, "LOGNAME": {},

@@ -61,7 +61,7 @@ func TestSTTTranscribeParsesResponse(t *testing.T) {
 func TestSTTErrorHasNoToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"code":"unauthenticated","error":"use SECRETTOKEN"}`))
+		_, _ = w.Write([]byte(`{"code":"unauthenticated","error":"bad credentials"}`))
 	}))
 	defer srv.Close()
 	c := &STT{BaseURL: srv.URL, HTTP: srv.Client()}
@@ -75,6 +75,51 @@ func TestSTTErrorHasNoToken(t *testing.T) {
 	}
 	if UserMessage(err) != "Couldn't transcribe that voice note." {
 		t.Fatalf("user msg %q", UserMessage(err))
+	}
+}
+
+func TestSTTForbiddenIsAuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"unauthenticated:bad-credentials","error":"The OAuth2 access token could not be validated."}`))
+	}))
+	defer srv.Close()
+	c := &STT{BaseURL: srv.URL, HTTP: srv.Client()}
+	_, err := c.Transcribe(context.Background(), "tok", bytes.NewReader([]byte("x")), "a.ogg", "audio/ogg")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !AuthHTTP(err) {
+		t.Fatalf("want auth http error, got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "403") {
+		t.Fatalf("error missing status: %q", msg)
+	}
+	if !strings.Contains(msg, "unauthenticated:bad-credentials") {
+		t.Fatalf("error missing body: %q", msg)
+	}
+	if UserMessage(err) != "Couldn't transcribe that voice note." {
+		t.Fatalf("user msg %q", UserMessage(err))
+	}
+}
+
+func TestSTTServerErrorIsNotAuth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
+	}))
+	defer srv.Close()
+	c := &STT{BaseURL: srv.URL, HTTP: srv.Client()}
+	_, err := c.Transcribe(context.Background(), "tok", bytes.NewReader([]byte("x")), "a.ogg", "audio/ogg")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if AuthHTTP(err) {
+		t.Fatalf("500 must not be auth: %v", err)
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("error missing status: %q", err.Error())
 	}
 }
 

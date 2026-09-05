@@ -164,6 +164,33 @@ func TestReadContainerFile(t *testing.T) {
 	}
 }
 
+func TestRefreshGrokAuthRunsModels(t *testing.T) {
+	r := New()
+	var gotArgs []string
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	if err := r.RefreshGrokAuth(context.Background(), cfg, chat); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	for _, want := range []string{
+		"exec -c " + chat.JailbeeConfig() + " main --",
+		"grok models",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("args %q missing %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, "cat --") || strings.Contains(joined, "-p ") {
+		t.Fatalf("refresh must not cat or prompt: %q", joined)
+	}
+}
+
 func containsSeq(args, want []string) bool {
 	if len(want) == 0 || len(args) < len(want) {
 		return false
