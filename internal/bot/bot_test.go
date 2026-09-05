@@ -708,6 +708,70 @@ func TestOrchestrateShortVoiceSTTErrorSilent(t *testing.T) {
 	}
 }
 
+func TestIsAckReply(t *testing.T) {
+	yes := []string{"👍", "  👍  \n", "👍\uFE0F", "\uFE0F👍"}
+	for _, s := range yes {
+		if !isAckReply(s) {
+			t.Fatalf("want ack for %q", s)
+		}
+	}
+	no := []string{
+		"",
+		"(empty reply)",
+		"👍 saved",
+		"saved 👍",
+		"ok",
+		"ACK",
+		"👍\n👍",
+	}
+	for _, s := range no {
+		if isAckReply(s) {
+			t.Fatalf("did not want ack for %q", s)
+		}
+	}
+}
+
+type stubBotClient struct {
+	method string
+	params map[string]any
+}
+
+func (s *stubBotClient) RequestWithContext(_ context.Context, _ string, method string, params map[string]any, _ *gotgbot.RequestOpts) (json.RawMessage, error) {
+	s.method = method
+	s.params = params
+	return json.RawMessage(`true`), nil
+}
+
+func (s *stubBotClient) GetAPIURL(*gotgbot.RequestOpts) string { return "" }
+
+func (s *stubBotClient) FileURL(string, string, *gotgbot.RequestOpts) string { return "" }
+
+func TestAckMessageSetsReaction(t *testing.T) {
+	stub := &stubBotClient{}
+	tg := &gotgbot.Bot{Token: "tok", BotClient: stub}
+	b := silentBot(t, nil)
+	msg := &gotgbot.Message{MessageId: 7, Chat: gotgbot.Chat{Id: -100}}
+	if err := b.ackMessage(tg, msg); err != nil {
+		t.Fatal(err)
+	}
+	if stub.method != "setMessageReaction" {
+		t.Fatalf("method %q", stub.method)
+	}
+	if stub.params["chat_id"] != int64(-100) {
+		t.Fatalf("chat_id %v", stub.params["chat_id"])
+	}
+	if stub.params["message_id"] != int64(7) {
+		t.Fatalf("message_id %v", stub.params["message_id"])
+	}
+	raw, err := json.Marshal(stub.params["reaction"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"emoji":"👍"`) {
+		t.Fatalf("reaction %s", raw)
+	}
+}
+
 func TestLiveTurnDownloadSkipsAfterPrepare(t *testing.T) {
 	turn := &liveTurn{speechPrepared: true}
 	if err := turn.Download(); err != nil {

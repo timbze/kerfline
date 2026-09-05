@@ -78,6 +78,7 @@ systemctl --user enable --now kerfline
 - **Groups that want “hey kerf / hey grok / clearly workspace data”:** set `require_mention = false` so every non-empty line reaches Kerfline. A cheap gate decides whether to run a full Grok turn. No typing indicator and no Telegram reply when the gate says skip.
 - **DMs:** keep `require_mention = false`. The same gate applies unless `[grok].gate = false`, which restores always-on full turns.
 - **Explicit `/ask` and `@botusername`:** skip the gate (typing + full turn immediately).
+- **Informational drops:** if Grok files workspace data and has nothing to say, it prints only `👍`. Kerfline sets a thumbs-up reaction on that message instead of a chat reply. Empty stdout is still `(empty reply)`.
 
 Optional knobs in `contrib/config.example.toml` under `[grok]`: `gate`, `gate_model`, `gate_timeout`, `gate_reasoning` (`none` | `low` | `medium` | `high` | `xhigh` | `omit`), `gate_speech_max` (default `2m`). Defaults: model `grok-4.3`, reasoning `none`. Use `omit` to leave `reasoning_effort` off the request for models that do not accept `none`.
 

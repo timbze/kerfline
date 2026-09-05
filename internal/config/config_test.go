@@ -338,6 +338,18 @@ func TestDefaultRulesForbidPersonalNames(t *testing.T) {
 	}
 }
 
+func TestDefaultRulesIncludeAck(t *testing.T) {
+	if !strings.Contains(DefaultRules, "👍") {
+		t.Fatal("DefaultRules must tell Grok to print 👍 for informational saves")
+	}
+	if !strings.Contains(DefaultRules, "Informational saves") {
+		t.Fatal("DefaultRules must have an Informational saves section")
+	}
+	if !strings.Contains(DefaultRules, "Empty stdout is not") {
+		t.Fatal("DefaultRules must say empty stdout is not an ack")
+	}
+}
+
 func TestDefaultRulesIncludeAttachments(t *testing.T) {
 	if !strings.Contains(DefaultRules, "Telegram attachments") {
 		t.Fatal("DefaultRules must describe Telegram attachments")

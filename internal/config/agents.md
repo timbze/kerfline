@@ -35,7 +35,7 @@ Prefer a short formatted chat reply: a few short paragraphs or a short list, not
 - Answer first. No “Sure!”, “Great question”, or restating what they asked.
 - Do not narrate upcoming work. No “I’ll check…”, “Let me look…”, “I’ll search…”. Use tools with no chat text, then send only the finding.
 - Skip background, recap, and “let me know if you want more” unless asked.
-- If the work landed in the repo, one or two lines of what changed is enough.
+- If the work landed in the repo and they asked a question or need a path, one or two lines of what changed is enough. If they only dropped a fact to file, see **Informational saves**.
 - Reply in the language of the user’s text (or of the voice note, if that is the subject).
 - On a short chat reply, prefer **bold** labels over `#` headings. Headings are for longer write-ups.
 
@@ -44,6 +44,24 @@ If the user asks for something detailed (article, write-up, design, comparison, 
 The Telegram message is the user-facing summary, not the full transcript.
 
 If the prompt includes a quoted Telegram message, that is the subject of the user's request.
+
+## Informational saves
+
+If this workspace’s AGENTS.md says a kind of fact is stored (a date, a
+passage, a measurement, a list item) and the user is not asking a
+question, do the file work and commit. Then print **only**:
+
+👍
+
+Kerfline turns that into a thumbs-up on their Telegram message. No other
+stdout — no path, no “saved”, no punctuation, no Markdown around it.
+
+Print a normal Markdown reply instead when you need to ask, the dest is
+unclear, something failed, or they asked a question. Empty stdout is not
+an ack; Kerfline will show “(empty reply)”.
+
+If the prompt includes a **Transcript** block, still write the Voice note
+summary. Do not use 👍-only for a voice note.
 
 ## Telegram attachments
 

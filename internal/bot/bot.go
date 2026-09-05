@@ -599,11 +599,39 @@ func (t *liveTurn) Run() error {
 		b.log.Error("session persist", "err", err)
 	}
 	reply := res.Stdout
+	if isAckReply(reply) {
+		b.log.Info("grok done", "chat", chat.Name, "duration", res.Duration, "ack", true)
+		return b.ackMessage(tg, msg)
+	}
 	if reply == "" {
 		reply = "(empty reply)"
 	}
 	b.log.Info("grok done", "chat", chat.Name, "duration", res.Duration, "out_chars", len(reply))
 	return b.replyChunks(tg, msg, chat.Workspace, reply)
+}
+
+const ackThumb = "👍"
+
+func isAckReply(s string) bool {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\uFE0F", "")
+	s = strings.ReplaceAll(s, "\uFE0E", "")
+	return s == ackThumb
+}
+
+func (b *Bot) ackMessage(tg *gotgbot.Bot, msg *gotgbot.Message) error {
+	opts := &gotgbot.SetMessageReactionOpts{
+		Reaction: []gotgbot.ReactionType{
+			gotgbot.ReactionTypeEmoji{Emoji: ackThumb},
+		},
+	}
+	if _, err := msg.SetReaction(tg, opts); err != nil {
+		if b.log != nil {
+			b.log.Error("ack reaction failed; sending thumbs-up text", "err", err)
+		}
+		return b.sendTextChunks(tg, msg, ackThumb)
+	}
+	return nil
 }
 
 func (b *Bot) transcribeStaged(ctx context.Context, chat config.Chat, staged media.StagedFile) (media.Transcript, error) {
