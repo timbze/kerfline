@@ -23,7 +23,7 @@ Runtime config is `~/.config/kerfline/` (not in git): `config.toml`, `chats/*.to
 | `internal/config` | TOML load; embeds default Grok rules |
 | `internal/runner` | `jailbee exec … -- grok` |
 | `internal/media` | Stage inbound Telegram files; upload outbound Markdown images |
-| `internal/session` | Per-chat Grok session ids |
+| `internal/session` | Per-chat Grok session ids; resume within 4h idle |
 | `contrib/` | Example config and systemd unit |
 | `plan/` | Setup notes, not product spec |
 
