@@ -629,10 +629,15 @@ func (t *liveTurn) Run() error {
 const ackThumb = "👍"
 
 func isAckReply(s string) bool {
-	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\uFE0F", "")
 	s = strings.ReplaceAll(s, "\uFE0E", "")
-	return s == ackThumb
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	lines := strings.Split(s, "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	return last == ackThumb || strings.HasSuffix(last, ackThumb)
 }
 
 func (b *Bot) ackMessage(tg *gotgbot.Bot, msg *gotgbot.Message) error {

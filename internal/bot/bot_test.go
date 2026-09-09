@@ -898,7 +898,16 @@ func TestOrchestrateShortVoiceSTTErrorSilent(t *testing.T) {
 }
 
 func TestIsAckReply(t *testing.T) {
-	yes := []string{"👍", "  👍  \n", "👍\uFE0F", "\uFE0F👍"}
+	yes := []string{
+		"👍",
+		"  👍  \n",
+		"👍\uFE0F",
+		"\uFE0F👍",
+		"👍\n👍",
+		"saved 👍",
+		"I'll file this week's study under the coming Thursday and then commit.\nThere's already a Thursday file; I'll update it and commit.\n👍",
+		"I'll file this week's study under the coming Thursday and then commit.There's already a Thursday file; I'll update it to 2 Corinthians 10:1–6 and commit.👍",
+	}
 	for _, s := range yes {
 		if !isAckReply(s) {
 			t.Fatalf("want ack for %q", s)
@@ -908,10 +917,9 @@ func TestIsAckReply(t *testing.T) {
 		"",
 		"(empty reply)",
 		"👍 saved",
-		"saved 👍",
 		"ok",
 		"ACK",
-		"👍\n👍",
+		"Information saved.",
 	}
 	for _, s := range no {
 		if isAckReply(s) {

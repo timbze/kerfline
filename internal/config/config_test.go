@@ -354,11 +354,20 @@ func TestDefaultRulesIncludeAck(t *testing.T) {
 	if !strings.Contains(DefaultRules, "👍") {
 		t.Fatal("DefaultRules must tell Grok to print 👍 for informational saves")
 	}
+	if !strings.Contains(DefaultRules, "## Stdout") {
+		t.Fatal("DefaultRules must put the stdout contract first")
+	}
+	if i, j := strings.Index(DefaultRules, "## Stdout"), strings.Index(DefaultRules, "## Format"); i < 0 || j < 0 || i > j {
+		t.Fatal("DefaultRules must put Stdout before Format")
+	}
 	if !strings.Contains(DefaultRules, "Informational saves") {
 		t.Fatal("DefaultRules must have an Informational saves section")
 	}
 	if !strings.Contains(DefaultRules, "Empty stdout is not") {
 		t.Fatal("DefaultRules must say empty stdout is not an ack")
+	}
+	if !strings.Contains(DefaultRules, "failed ack") {
+		t.Fatal("DefaultRules must say recap-then-👍 is a failed ack")
 	}
 }
 
