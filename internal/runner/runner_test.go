@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/config"
 )
 
 func TestRunBuildsJailbeeExec(t *testing.T) {

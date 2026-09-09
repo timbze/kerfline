@@ -17,10 +17,10 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
-	"kerfline/internal/config"
-	"kerfline/internal/gate"
-	"kerfline/internal/media"
-	"kerfline/internal/runner"
+	"github.com/timbze/kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/gate"
+	"github.com/timbze/kerfline/internal/media"
+	"github.com/timbze/kerfline/internal/runner"
 )
 
 func TestSTTTokenPrefersEnv(t *testing.T) {

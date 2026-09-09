@@ -15,7 +15,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
-	"kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/config"
 )
 
 type fakeFiles struct {

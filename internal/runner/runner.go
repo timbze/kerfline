@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/config"
 )
 
 type Result struct {

@@ -1,4 +1,4 @@
-module kerfline
+module github.com/timbze/kerfline
 
 go 1.24
 

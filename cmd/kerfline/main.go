@@ -11,10 +11,10 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
-	"kerfline/internal/bot"
-	"kerfline/internal/config"
-	"kerfline/internal/runner"
-	"kerfline/internal/session"
+	"github.com/timbze/kerfline/internal/bot"
+	"github.com/timbze/kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/runner"
+	"github.com/timbze/kerfline/internal/session"
 )
 
 func main() {

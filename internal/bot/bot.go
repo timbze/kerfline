@@ -16,11 +16,11 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 
-	"kerfline/internal/config"
-	"kerfline/internal/gate"
-	"kerfline/internal/media"
-	"kerfline/internal/runner"
-	"kerfline/internal/session"
+	"github.com/timbze/kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/gate"
+	"github.com/timbze/kerfline/internal/media"
+	"github.com/timbze/kerfline/internal/runner"
+	"github.com/timbze/kerfline/internal/session"
 )
 
 type gater interface {

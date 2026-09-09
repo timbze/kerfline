@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"kerfline/internal/config"
+	"github.com/timbze/kerfline/internal/config"
 )
 
 type Files interface {
