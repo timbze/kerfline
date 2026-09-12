@@ -27,12 +27,24 @@ type StageError struct {
 
 func (e *StageError) Error() string { return e.Msg }
 
+const (
+	notIgnoredLogMsg  = "refusing to stage: `.local/` is not gitignored."
+	notIgnoredUserMsg = "We can't handle that file because this chat isn't fully set up. Contact your Kerfline admin."
+)
+
 func UserMessage(err error) string {
 	var se *StageError
-	if errors.As(err, &se) && se.Msg != "" {
-		return se.Msg
+	if !errors.As(err, &se) || se.Msg == "" {
+		return "Couldn't download that file."
 	}
-	return "Couldn't download that file."
+	if se.Reason == "not_ignored" {
+		return notIgnoredUserMsg
+	}
+	return se.Msg
+}
+
+func errNotIgnored() error {
+	return &StageError{Reason: "not_ignored", Msg: notIgnoredLogMsg}
 }
 
 type Store struct {
@@ -85,14 +97,14 @@ func (s *Store) Materialize(ctx context.Context, chat config.Chat, ref Attachmen
 	}
 	ignored, gitMissing, err := check(chat.Workspace)
 	if err != nil {
-		return StagedFile{}, &StageError{Reason: "not_ignored", Msg: "refusing to stage: `.local/` is not gitignored."}
+		return StagedFile{}, errNotIgnored()
 	}
 	if gitMissing {
 		if s.Log != nil {
 			s.Log.Warn("git not found; staging under .local anyway", "workspace", chat.Workspace)
 		}
 	} else if !ignored {
-		return StagedFile{}, &StageError{Reason: "not_ignored", Msg: "refusing to stage: `.local/` is not gitignored."}
+		return StagedFile{}, errNotIgnored()
 	}
 
 	if ref.FileSize > 0 && ref.FileSize > maxBytes {

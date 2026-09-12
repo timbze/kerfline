@@ -305,8 +305,14 @@ func TestMaterializeRefusesIfNotIgnored(t *testing.T) {
 	s := NewStore(&fakeFiles{path: "x", body: []byte("a")}, nil)
 	_, err := s.Materialize(context.Background(), config.Chat{Name: "n", Workspace: ws},
 		AttachmentRef{MessageID: 1, FileID: "f", FileUniqueID: "u", MIME: "image/jpeg"}, 1000, time.Hour)
-	if err == nil || UserMessage(err) != "refusing to stage: `.local/` is not gitignored." {
-		t.Fatalf("err=%v", err)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != notIgnoredLogMsg {
+		t.Fatalf("log msg %q", err.Error())
+	}
+	if UserMessage(err) != notIgnoredUserMsg {
+		t.Fatalf("user msg %q", UserMessage(err))
 	}
 }
 
