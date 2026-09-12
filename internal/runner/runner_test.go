@@ -50,6 +50,7 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 		"--always-approve",
 		"--disallowed-tools web_fetch",
 		"-r 11111111-1111-1111-1111-111111111111",
+		"--output-format streaming-json",
 		"--rules Keep it short.",
 	} {
 		if !strings.Contains(joined, want) {
@@ -129,6 +130,24 @@ func TestRunPromptFileXorPrompt(t *testing.T) {
 	}
 	if strings.Contains(joined, "grok -p ") {
 		t.Fatalf("must not pass -p with prompt-file: %q", joined)
+	}
+}
+
+func TestRunLastTurnFromStream(t *testing.T) {
+	r := New()
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		script := `printf '%s\n' '{"type":"text","data":"I will look through the codebase."}' '{"type":"tool_call","toolCallId":"1"}' '{"type":"text","data":"Not a new alarm type."}' '{"type":"end","stopReason":"end_turn"}'`
+		return exec.CommandContext(ctx, "sh", "-c", script)
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	res, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "when was idle added"}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stdout != "Not a new alarm type." {
+		t.Fatalf("stdout %q", res.Stdout)
 	}
 }
 

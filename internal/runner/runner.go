@@ -73,7 +73,6 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	} else {
 		args = append(args, "-p", req.Prompt)
 	}
-	args = append(args, "--output-format", "plain")
 	if cfg.Grok.AlwaysApprove {
 		args = append(args, "--always-approve")
 	}
@@ -91,6 +90,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 		args = append(args, "--deny", rule)
 	}
 	args = append(args, cfg.Grok.ExtraArgs...)
+	args = append(args, "--output-format", "streaming-json")
 	if cfg.Rules != "" {
 		args = append(args, "--rules", cfg.Rules)
 	}
@@ -98,12 +98,19 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	cmd := r.Command(ctx, path, args...)
 	cmd.Dir = chat.Workspace
 	cmd.Env = filteredEnv()
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return Result{}, fmt.Errorf("stdout pipe: %w", err)
+	}
 	start := time.Now()
-	err = cmd.Run()
-	res := Result{Stdout: strings.TrimSpace(stdout.String()), Stderr: strings.TrimSpace(stderr.String()), Duration: time.Since(start)}
+	if err := cmd.Start(); err != nil {
+		return Result{Stderr: strings.TrimSpace(stderr.String()), Duration: time.Since(start)}, fmt.Errorf("jailbee exec: %w", err)
+	}
+	out, _ := lastTurn(stdout)
+	err = cmd.Wait()
+	res := Result{Stdout: out, Stderr: strings.TrimSpace(stderr.String()), Duration: time.Since(start)}
 	if err != nil {
 		if res.Stderr != "" {
 			return res, fmt.Errorf("jailbee exec: %w: %s", err, truncate(res.Stderr, 500))
