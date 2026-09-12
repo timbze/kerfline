@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/kerfline
+# Non-zero exit includes a hung getUpdates watchdog; bring the poller back.
 Restart=on-failure
 RestartSec=3
 Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/bin

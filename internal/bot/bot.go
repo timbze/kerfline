@@ -87,21 +87,30 @@ func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
 	if b.cfg.UseWebhook() {
 		return b.runWebhook(ctx, tg)
 	}
-	b.log.Info("starting long poll", "reason", pollReason(b.cfg))
+	b.log.Info("starting long poll",
+		"reason", pollReason(b.cfg),
+		"telegram_timeout_s", pollTelegramTimeout,
+		"http_timeout", pollHTTPTimeout)
 	err := b.updater.StartPolling(tg, &ext.PollingOpts{
 		EnableWebhookDeletion: true,
 		DropPendingUpdates:    false,
 		GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-			Timeout: 9,
+			Timeout: pollTelegramTimeout,
 			RequestOpts: &gotgbot.RequestOpts{
-				Timeout: 10 * time.Second,
+				Timeout: pollRequestTimeout,
 			},
 		},
 	})
 	if err != nil {
 		return err
 	}
-	return b.idle(ctx)
+	var stale <-chan error
+	if c, ok := tg.BotClient.(*TelegramClient); ok {
+		ch := make(chan error, 1)
+		go b.watchGetUpdates(ctx, c, ch)
+		stale = ch
+	}
+	return b.idle(ctx, stale)
 }
 
 func pollReason(cfg *config.Config) string {
@@ -136,7 +145,7 @@ func (b *Bot) runWebhook(ctx context.Context, tg *gotgbot.Bot) error {
 		return fmt.Errorf("setWebhook: %w", err)
 	}
 	b.log.Info("webhook listening", "listen", b.cfg.Telegram.Listen, "url", url+"/"+b.cfg.Telegram.Path)
-	return b.idle(ctx)
+	return b.idle(ctx, nil)
 }
 
 func (b *Bot) drain(ctx context.Context, tg *gotgbot.Bot) (int, error) {
@@ -174,19 +183,44 @@ func (b *Bot) drain(ctx context.Context, tg *gotgbot.Bot) (int, error) {
 	}
 }
 
-func (b *Bot) idle(ctx context.Context) error {
+func (b *Bot) idle(ctx context.Context, stale <-chan error) error {
 	done := make(chan struct{})
 	go func() {
 		b.updater.Idle()
 		close(done)
 	}()
 	select {
+	case err := <-stale:
+		_ = b.updater.Stop()
+		<-done
+		return err
 	case <-ctx.Done():
 		_ = b.updater.Stop()
 		<-done
 		return ctx.Err()
 	case <-done:
 		return nil
+	}
+}
+
+func (b *Bot) watchGetUpdates(ctx context.Context, c *TelegramClient, stale chan<- error) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !c.stale(time.Now(), pollWatchdog) {
+				continue
+			}
+			idle := time.Since(c.lastPollAt()).Truncate(time.Second)
+			if b.log != nil {
+				b.log.Error("getUpdates hung; exiting so systemd can restart", "idle", idle)
+			}
+			stale <- fmt.Errorf("getUpdates hung for %s", idle)
+			return
+		}
 	}
 }
 

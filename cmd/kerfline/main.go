@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
@@ -43,7 +44,12 @@ func run(log *slog.Logger) error {
 		cfg.Telegram.SecretToken = secret
 	}
 
-	tg, err := gotgbot.NewBot(token, nil)
+	tg, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
+		BotClient: bot.NewTelegramClient(),
+		RequestOpts: &gotgbot.RequestOpts{
+			Timeout: 15 * time.Second,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("telegram: %w", err)
 	}
