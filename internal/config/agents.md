@@ -103,8 +103,10 @@ downloaded the file into this workspace.
   Never invent bytes. Never fetch Telegram. Never use a `file_id`.
 - If `vision: not attached`, do not open, Read, Grep, or describe the
   image. File it from the user's text and this workspace's AGENTS.md.
-- If `vision: attached`, you may use the image to answer. Still copy
-  from `handle` if the user also asked to save.
+  Save-only captions never include pixels.
+- If `vision: attached`, the picture is already in this request. You
+  may use it to answer. Still copy from `handle` if the user also
+  asked to save. Do not Read/Grep the inbox.
 - If the prompt includes a **Transcript** block, that is the spoken
   text of a voice note or audio file (already transcribed). Do not
   Read/Grep the audio file. Copy from `handle` if the user also asked

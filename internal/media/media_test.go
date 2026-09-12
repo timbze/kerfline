@@ -213,6 +213,30 @@ func TestFormatAttachment(t *testing.T) {
 	}
 }
 
+func TestFormatAttachmentVisionAttached(t *testing.T) {
+	staged := StagedFile{
+		Ref:     AttachmentRef{Kind: "photo", MessageID: 1},
+		RelPath: ".local/telegram-inbox/notes/1-x.jpg",
+	}
+	got := FormatAttachment(staged, VisionPromptLine(ClassLook, "image/jpeg", true))
+	if !strings.Contains(got, "vision: attached.") {
+		t.Fatalf("missing attached: %q", got)
+	}
+	if strings.Contains(got, "not attached") || strings.Contains(got, "Do not Read/Grep/open") {
+		t.Fatalf("attached line should not forbid looking: %q", got)
+	}
+}
+
+func TestVisionPromptLineLookOff(t *testing.T) {
+	got := VisionPromptLine(ClassLook, "image/jpeg", false)
+	if !strings.Contains(got, "look is off for this chat") {
+		t.Fatalf("%q", got)
+	}
+	if strings.Contains(got, "not enabled yet") {
+		t.Fatalf("stale: %q", got)
+	}
+}
+
 func TestKindLineVoice(t *testing.T) {
 	got := KindLine(AttachmentRef{Kind: "voice", MIME: "audio/ogg", Duration: 12})
 	if !strings.Contains(got, "voice") || !strings.Contains(got, "12s") || !strings.Contains(got, "audio/ogg") {

@@ -33,6 +33,7 @@ binary = "jailbee"
 # Telegram photo/document staging. Defaults shown; all keys optional.
 max_file_bytes = 20000000
 vision = "auto"       # auto | always | never
+                      # auto: JPEG/PNG pixels only on look/mixed captions, never on save-only
 inbox_ttl = "168h"
 
 [stt]

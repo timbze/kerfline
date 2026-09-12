@@ -552,11 +552,14 @@ func (t *liveTurn) stageMedia(ctx context.Context, silent bool) error {
 	if ref == nil {
 		return nil
 	}
+	// Text first: save-only captions stage the file but do not send pixels.
 	class := media.Classify(classifyInput(msg, ref))
 	speech := media.IsSpeech(*ref)
+	attach := false
 	if !speech {
 		vision := b.cfg.EffectiveVision(chat)
-		_, skipLook := media.AttachVision(class, ref.MIME, vision)
+		var skipLook bool
+		attach, skipLook = media.AttachVision(class, ref.MIME, vision)
 		if skipLook {
 			b.log.Info("media skip", "reason", "look_disabled", "chat", chat.Name)
 			if silent {
@@ -591,7 +594,7 @@ func (t *liveTurn) stageMedia(ctx context.Context, silent bool) error {
 		"file_unique_id", ref.FileUniqueID,
 		"bytes", staged.Bytes,
 		"kind", ref.Kind)
-	promptLine := media.VisionPromptLine(class, ref.MIME, false)
+	promptLine := media.VisionPromptLine(class, ref.MIME, attach)
 	if speech {
 		promptLine = media.SpeechPromptLine()
 		sttTimeout := b.cfg.STTTimeout()
@@ -617,7 +620,21 @@ func (t *liveTurn) stageMedia(ctx context.Context, silent bool) error {
 	}
 	t.req.Prompt += media.FormatAttachment(staged, promptLine)
 	t.req.Deny = media.InboxDenyRules()
-	t.mediaAttrs = []any{"attachments", 1, "class", class.String(), "vision", false, "deny_inbox", true, "speech", speech}
+	if attach {
+		rel, err := media.WritePromptJSON(staged, t.req.Prompt)
+		if err != nil {
+			b.log.Error("vision attach", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token))
+			if silent {
+				return err
+			}
+			_, sendErr := msg.Reply(tg, redactToken(media.UserMessage(err), tg.Token), replyOpts(msg))
+			t.aborted = true
+			return sendErr
+		}
+		t.req.PromptFile = rel
+		t.req.Prompt = ""
+	}
+	t.mediaAttrs = []any{"attachments", 1, "class", class.String(), "vision", attach, "deny_inbox", true, "speech", speech}
 	return nil
 }
 

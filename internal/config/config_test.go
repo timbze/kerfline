@@ -375,6 +375,9 @@ func TestDefaultRulesIncludeAttachments(t *testing.T) {
 	if !strings.Contains(DefaultRules, "Telegram attachments") {
 		t.Fatal("DefaultRules must describe Telegram attachments")
 	}
+	if !strings.Contains(DefaultRules, "Save-only captions never include pixels") {
+		t.Fatal("DefaultRules must say save-only turns omit pixels")
+	}
 	if !strings.Contains(DefaultRules, "Never stage `.local/`") && !strings.Contains(DefaultRules, "Never\nstage `.local/`") {
 		if !strings.Contains(DefaultRules, "telegram-inbox") {
 			t.Fatal("DefaultRules must forbid staging telegram-inbox")

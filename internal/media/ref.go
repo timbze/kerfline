@@ -293,7 +293,7 @@ func VisionPromptLine(class Class, mime string, attached bool) string {
 		if !VisionMIME(mime) {
 			extra = " (MIME not supported in v1)"
 		} else {
-			extra = " yet (looking at pictures is not enabled yet)"
+			extra = " (look is off for this chat)"
 		}
 	}
 	return "not attached" + extra + ". Copy the file with cp/mv from the handle. Do not Read/Grep/open the image. Destination and Markdown follow this workspace's AGENTS.md. Then git-add only the dest + notes (never .local/) and commit."

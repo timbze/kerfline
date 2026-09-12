@@ -37,8 +37,8 @@ What that split buys you:
 - Persistence: the workspace is ordinary git you already know how to backup
 - Scope: one chat (or one forum topic) owns one repo
 - Media: photos and documents can be filed without sending pixels to Grok;
-  voice notes are transcribed; Grok can send a workspace file back as a
-  Telegram photo
+  look captions attach JPEG/PNG so Grok can describe them; voice notes are
+  transcribed; Grok can send a workspace file back as a Telegram photo
 
 ## Requirements
 
@@ -192,21 +192,26 @@ request for models that do not accept `none`.
 
 ### Photos, documents, and voice
 
-Kerfline can file Telegram photos and documents into the chat’s git workspace
-**without** sending pixels to Grok.
+Kerfline files Telegram photos and documents into the chat’s git workspace.
+It classifies the caption or reply **from the text first**, then decides
+whether Grok should see the pixels.
 
 - Caption a photo with `/ask save this …`, or send the photo first and
   **reply** to it with `/ask …` (or unadorned text in a DM).
 - The host downloads the file into gitignored `.local/telegram-inbox/` and
-  Grok `cp`s that handle to a dest from the **workspace** `AGENTS.md`. Grok
-  is told not to open the image; inbox `Read`/`Grep` is denied.
+  Grok `cp`s that handle to a dest from the **workspace** `AGENTS.md`. Inbox
+  `Read`/`Grep` is denied either way.
+- **Save-only** (“save this”, “file this”, a date, no look phrases): Grok
+  gets the handle and is told not to open the image. Pixels stay off the
+  model.
+- **Look** (“what’s this”, “describe”, “can you see…”) or **mixed** (look
+  and save): JPEG/PNG pixels are attached so Grok can answer. It still
+  copies from the handle if you also asked to save. PDF, WebP, and HEIC
+  stay file-only in v1.
 - Bare photos (no caption, no later reply) are ignored — no Grok turn and no
   ack.
 - Telegram **photos** are compressed JPEGs. For an archival scan, send it as
   a **document**.
-- Looking at a picture (vision) is not enabled yet. Until it is, “what does
-  this show?” still stages the file and asks Grok to file from the text,
-  without attaching pixels.
 
 Voice notes and audio: caption `/ask …`, or **reply** to the clip with
 `/ask …` (or unadorned text in a DM). In chats with `require_mention = false`,
@@ -228,8 +233,9 @@ JPEG/PNG/WebP are uploaded as photos; other types as documents. Paths
 outside the workspace, or under `.local/` / `.git/`, are refused. Remote
 `https://` images are left as Markdown and not fetched.
 
-`.local/` must stay gitignored. Per-chat `vision = "never"` skips look-only
-turns.
+`.local/` must stay gitignored. Default `vision = "auto"` is the save-vs-look
+split above. Per-chat `vision = "never"` skips look-only turns;
+`vision = "always"` attaches JPEG/PNG even on save.
 
 ## Adding a chat
 

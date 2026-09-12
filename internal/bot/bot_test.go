@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -973,5 +974,131 @@ func TestLiveTurnDownloadSkipsAfterPrepare(t *testing.T) {
 	turn := &liveTurn{speechPrepared: true}
 	if err := turn.Download(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type stageFiles struct {
+	body []byte
+}
+
+func (f *stageFiles) Lookup(context.Context, string) (string, int64, error) {
+	return "photos/x.jpg", int64(len(f.body)), nil
+}
+
+func (f *stageFiles) Fetch(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(f.body)), nil
+}
+
+func gitWorkspace(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s", out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".local/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func photoMsg(caption string) *gotgbot.Message {
+	return &gotgbot.Message{
+		MessageId: 7,
+		Caption:   caption,
+		Photo: []gotgbot.PhotoSize{
+			{FileId: "f", FileUniqueId: "uniq1", Width: 10, Height: 10, FileSize: 10},
+		},
+		From: &gotgbot.User{Id: 42},
+		Chat: gotgbot.Chat{Id: 1, Type: gotgbot.ChatTypePrivate},
+	}
+}
+
+func visionTurn(t *testing.T, caption, vision string) *liveTurn {
+	t.Helper()
+	ws := gitWorkspace(t)
+	b := silentBot(t, nil)
+	b.cfg.Media.MaxFileBytes = 1000
+	b.cfg.Media.Vision = vision
+	b.media = media.NewStore(&stageFiles{body: []byte("jpeg-bytes")}, b.log)
+	return &liveTurn{
+		bot:    b,
+		tg:     &gotgbot.Bot{},
+		msg:    photoMsg(caption),
+		chat:   config.Chat{Name: "notes", Workspace: ws},
+		prompt: caption,
+	}
+}
+
+func TestStageMediaSaveOmitsPixels(t *testing.T) {
+	turn := visionTurn(t, "save this", config.VisionAuto)
+	if err := turn.stageMedia(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if turn.req.PromptFile != "" {
+		t.Fatalf("save must not use prompt-file: %q", turn.req.PromptFile)
+	}
+	if !strings.Contains(turn.req.Prompt, "vision: not attached") {
+		t.Fatalf("prompt %q", turn.req.Prompt)
+	}
+	if len(turn.req.Deny) == 0 {
+		t.Fatal("expected inbox deny")
+	}
+	jsonPath := filepath.Join(turn.chat.Workspace, ".local/telegram-inbox/notes/7-uniq1.prompt.json")
+	if _, err := os.Stat(jsonPath); !os.IsNotExist(err) {
+		t.Fatalf("save must not write prompt json: %v", err)
+	}
+}
+
+func TestStageMediaLookAttachesPixels(t *testing.T) {
+	turn := visionTurn(t, "what's this", config.VisionAuto)
+	if err := turn.stageMedia(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if turn.req.Prompt != "" {
+		t.Fatalf("look must move prompt into json file, got %q", turn.req.Prompt)
+	}
+	if turn.req.PromptFile != ".local/telegram-inbox/notes/7-uniq1.prompt.json" {
+		t.Fatalf("prompt-file %q", turn.req.PromptFile)
+	}
+	raw, err := os.ReadFile(filepath.Join(turn.chat.Workspace, filepath.FromSlash(turn.req.PromptFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `"type":"image"`) || !strings.Contains(s, "what's this") || !strings.Contains(s, "vision: attached") {
+		t.Fatalf("%s", s)
+	}
+	if len(turn.req.Deny) == 0 {
+		t.Fatal("look still denies inbox read")
+	}
+}
+
+func TestStageMediaMixedAttachesPixels(t *testing.T) {
+	turn := visionTurn(t, "save this and describe it", config.VisionAuto)
+	if err := turn.stageMedia(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if turn.req.PromptFile == "" {
+		t.Fatal("mixed must attach")
+	}
+	raw, err := os.ReadFile(filepath.Join(turn.chat.Workspace, filepath.FromSlash(turn.req.PromptFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "vision: attached") {
+		t.Fatalf("%s", raw)
+	}
+}
+
+func TestStageMediaLookNeverSkips(t *testing.T) {
+	turn := visionTurn(t, "what's this", config.VisionNever)
+	err := turn.stageMedia(context.Background(), true)
+	if err == nil || err.Error() != "look disabled" {
+		t.Fatalf("err=%v", err)
+	}
+	if turn.req.PromptFile != "" {
+		t.Fatalf("must not attach: %q", turn.req.PromptFile)
 	}
 }
