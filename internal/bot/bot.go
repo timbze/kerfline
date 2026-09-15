@@ -456,9 +456,6 @@ func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.M
 	if Vocative(text) {
 		return gate.Reply, nil
 	}
-	if orig := msg.ReplyToMessage; orig != nil && orig.From != nil && orig.From.IsBot {
-		return gate.Reply, nil
-	}
 
 	timeout := gateTimeout(g.bot.cfg)
 	ctx, cancel := context.WithTimeout(ctx, timeout)

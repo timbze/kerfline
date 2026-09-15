@@ -609,8 +609,33 @@ func TestReplyGateVocativeNoHTTP(t *testing.T) {
 	}
 }
 
-func TestReplyGateReplyToBotNoHTTP(t *testing.T) {
+func TestReplyGateReplyToBotHitsHTTP(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "tok")
+	var called int
+	var userContent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		for _, m := range body.Messages {
+			if m.Role == "user" {
+				userContent = m.Content
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"respond\":false}"}}]}`))
+	}))
+	defer srv.Close()
+
 	b := silentBot(t, nil)
+	b.cfg.STT.BaseURL = srv.URL
+	b.cfg.Grok.GateModel = "grok-4.3"
+	b.cfg.Grok.GateReasoning = "none"
 	g := &replyGate{bot: b}
 	msg := groupMsg("ok do it")
 	msg.ReplyToMessage = &gotgbot.Message{
@@ -621,8 +646,17 @@ func TestReplyGateReplyToBotNoHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != gate.Reply {
-		t.Fatalf("got %v, want Reply", d)
+	if d != gate.Skip {
+		t.Fatalf("got %v, want Skip", d)
+	}
+	if called != 1 {
+		t.Fatalf("gate HTTP called %d times, want 1", called)
+	}
+	if !strings.Contains(userContent, "ok do it") {
+		t.Fatalf("user text missing: %q", userContent)
+	}
+	if !strings.Contains(userContent, "add milk?") {
+		t.Fatalf("quoted bot message missing: %q", userContent)
 	}
 }
 
