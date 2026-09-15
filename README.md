@@ -23,7 +23,8 @@ v1 is local git. Gitea `tea` keys exist on chat files but are unused.
 ```
 Telegram chat
     → Kerfline (this Go process, on the host)
-        → jailbee exec <container> -- grok …
+        → jailbee ls in that workspace → Incus full name
+        → jailbee exec <full name> -- grok …
             → Grok inside an Incus container
                 ↳ one git workspace per chat
 ```
@@ -142,7 +143,10 @@ echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 Edit `chats/notes.toml`:
 
 - `workspace` — **absolute** path of the repo from step 3
-- `jailbee_container = "main"`
+- `jailbee_container = "main"` — the **short** name from `jailbee ls` in
+  that workspace. Kerfline looks up the Incus full name from that listing
+  (`notes-main`, not a foreign container that happens to be called `main`)
+  and refuses to start if the name is not in this workspace.
 - `require_mention = false` for a private DM (`true` in groups unless you
   want every line gated; see below)
 - `telegram_chat_id = 0` until the next step

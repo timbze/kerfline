@@ -185,6 +185,9 @@ func fakeAuthRunner(t *testing.T, oldTok, newTok string, refresh *int, cmds *[]s
 	t.Helper()
 	cats := 0
 	r := runner.New()
+	r.Resolve = func(_ context.Context, _ *config.Config, chat config.Chat) (string, error) {
+		return chat.JailbeeContainer, nil
+	}
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		joined := strings.Join(args, " ")

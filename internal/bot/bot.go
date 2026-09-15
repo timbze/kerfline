@@ -84,6 +84,10 @@ func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
 	b.disp.AddHandler(handlers.NewMessage(message.Voice, b.onUserMessage))
 	b.disp.AddHandler(handlers.NewMessage(message.Audio, b.onUserMessage))
 
+	if err := b.resolveChats(ctx); err != nil {
+		return err
+	}
+
 	if b.cfg.UseWebhook() {
 		return b.runWebhook(ctx, tg)
 	}
@@ -111,6 +115,22 @@ func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
 		stale = ch
 	}
 	return b.idle(ctx, stale)
+}
+
+func (b *Bot) resolveChats(ctx context.Context) error {
+	if b.runner == nil {
+		return nil
+	}
+	for _, ch := range b.cfg.Chats {
+		name, err := b.runner.ContainerName(ctx, b.cfg, ch)
+		if err != nil {
+			return fmt.Errorf("chat %s: %w", ch.Name, err)
+		}
+		if b.log != nil {
+			b.log.Info("jailbee container", "chat", ch.Name, "requested", ch.JailbeeContainer, "incus", name)
+		}
+	}
+	return nil
 }
 
 func pollReason(cfg *config.Config) string {
@@ -654,11 +674,18 @@ func (t *liveTurn) Run() error {
 	}
 	sessionID, resume := b.sess.ID(chat.Name)
 	attrs = append(attrs, "session", sessionID, "resume", resume)
+	if name, err := b.runner.ContainerName(context.Background(), b.cfg, chat); err == nil && name != "" {
+		attrs = append(attrs, "incus", name)
+	}
 	b.log.Info("grok turn", attrs...)
 
 	res, err := b.runner.Run(context.Background(), b.cfg, chat, t.req, sessionID, resume)
 	if err != nil {
-		b.log.Error("grok failed", "chat", chat.Name, "err", redactToken(err.Error(), tg.Token), "duration", res.Duration)
+		failAttrs := []any{"chat", chat.Name, "err", redactToken(err.Error(), tg.Token), "duration", res.Duration}
+		if res.Container != "" {
+			failAttrs = append(failAttrs, "incus", res.Container)
+		}
+		b.log.Error("grok failed", failAttrs...)
 		_, sendErr := msg.Reply(tg, "Grok failed: "+redactToken(err.Error(), tg.Token), replyOpts(msg))
 		return sendErr
 	}

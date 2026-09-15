@@ -9,8 +9,13 @@ import (
 	"github.com/timbze/kerfline/internal/config"
 )
 
+func identityResolve(_ context.Context, _ *config.Config, chat config.Chat) (string, error) {
+	return chat.JailbeeContainer, nil
+}
+
 func TestRunBuildsJailbeeExec(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	var gotName string
 	var gotArgs []string
 	var gotCmd *exec.Cmd
@@ -61,6 +66,7 @@ func TestRunBuildsJailbeeExec(t *testing.T) {
 
 func TestRunOmitsRulesWhenEmpty(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	var gotArgs []string
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -80,6 +86,7 @@ func TestRunOmitsRulesWhenEmpty(t *testing.T) {
 
 func TestRunDenyFlags(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	var gotArgs []string
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -110,6 +117,7 @@ func TestRunDenyFlags(t *testing.T) {
 
 func TestRunPromptFileXorPrompt(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	var gotArgs []string
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -135,6 +143,7 @@ func TestRunPromptFileXorPrompt(t *testing.T) {
 
 func TestRunLastTurnFromStream(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		script := `printf '%s\n' '{"type":"text","data":"I will look through the codebase."}' '{"type":"tool_call","toolCallId":"1"}' '{"type":"text","data":"Not a new alarm type."}' '{"type":"end","stopReason":"end_turn"}'`
@@ -153,6 +162,7 @@ func TestRunLastTurnFromStream(t *testing.T) {
 
 func TestReadContainerFile(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	var gotArgs []string
 	body := `{"https://auth.x.ai::x":{"key":"tok-1"}}`
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
@@ -185,6 +195,7 @@ func TestReadContainerFile(t *testing.T) {
 
 func TestRefreshGrokAuthRunsModels(t *testing.T) {
 	r := New()
+	r.Resolve = identityResolve
 	var gotArgs []string
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -207,6 +218,119 @@ func TestRefreshGrokAuthRunsModels(t *testing.T) {
 	}
 	if strings.Contains(joined, "cat --") || strings.Contains(joined, "-p ") {
 		t.Fatalf("refresh must not cat or prompt: %q", joined)
+	}
+}
+
+func TestPickContainerPrefersWorkspaceFullName(t *testing.T) {
+	rows := []containerRow{
+		{Name: "main", FullName: "gbcmensl-main", State: "Running"},
+	}
+	got, err := pickContainer("main", rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "gbcmensl-main" {
+		t.Fatalf("got %q", got)
+	}
+	got, err = pickContainer("gbcmensl-main", rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "gbcmensl-main" {
+		t.Fatalf("full name %q", got)
+	}
+}
+
+func TestPickContainerMissing(t *testing.T) {
+	_, err := pickContainer("main", []containerRow{{Name: "feat", FullName: "notes-feat"}})
+	if err == nil || !strings.Contains(err.Error(), `jailbee container "main" is not in this workspace`) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestPickContainerAmbiguous(t *testing.T) {
+	_, err := pickContainer("main", []containerRow{
+		{Name: "main", FullName: "notes-main"},
+		{Name: "main", FullName: "other-main"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestRunExecsListingFullNameNotShortName(t *testing.T) {
+	r := New()
+	var execs [][]string
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		execs = append(execs, append([]string{name}, args...))
+		joined := strings.Join(args, " ")
+		if strings.HasPrefix(joined, "ls ") {
+			return exec.CommandContext(ctx, "printf", "%s", `[{"name":"main","full_name":"gbcmensl-main","state":"Running"}]`)
+		}
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	res, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Container != "gbcmensl-main" {
+		t.Fatalf("container %q", res.Container)
+	}
+	if len(execs) != 2 {
+		t.Fatalf("calls %d: %v", len(execs), execs)
+	}
+	ls := strings.Join(execs[0], " ")
+	if !strings.Contains(ls, "ls -c "+chat.JailbeeConfig()) || !strings.Contains(ls, "-o json") {
+		t.Fatalf("ls args %q", ls)
+	}
+	run := strings.Join(execs[1], " ")
+	if !strings.Contains(run, "exec -c "+chat.JailbeeConfig()+" gbcmensl-main --") {
+		t.Fatalf("exec must use listing full_name, got %q", run)
+	}
+	if strings.Contains(run, "exec -c "+chat.JailbeeConfig()+" main --") {
+		t.Fatalf("must not exec short name: %q", run)
+	}
+}
+
+func TestRunCachesResolvedName(t *testing.T) {
+	r := New()
+	var ls int
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		joined := strings.Join(args, " ")
+		if strings.HasPrefix(joined, "ls ") {
+			ls++
+			return exec.CommandContext(ctx, "printf", "%s", `[{"name":"main","full_name":"notes-main","state":"Running"}]`)
+		}
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "a"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RefreshGrokAuth(context.Background(), cfg, chat); err != nil {
+		t.Fatal(err)
+	}
+	if ls != 1 {
+		t.Fatalf("ls ran %d times, want 1", ls)
+	}
+}
+
+func TestResolveFromListMissingErrors(t *testing.T) {
+	r := New()
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "printf", "%s", `[{"name":"feat","full_name":"notes-feat","state":"Running"}]`)
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	_, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
+	if err == nil || !strings.Contains(err.Error(), `jailbee container "main" is not in this workspace`) {
+		t.Fatalf("err %v", err)
 	}
 }
 

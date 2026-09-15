@@ -13,6 +13,9 @@ require_mention = true
 # Optional. Overrides [media].vision for this chat (auto | always | never).
 # vision = "never"
 workspace = "/home/you/kerfline-workspaces/notes"
+# Short name from `jailbee ls` in that workspace (usually "main").
+# Kerfline execs the listing's Incus full_name so a foreign container
+# with the same short name cannot steal the turn.
 jailbee_container = "main"
 # Later: dedicated Gitea bot user invited only to this repo. Do not reuse host tea.
 # gitea_remote = "https://gitea.example.com/bot/notes"
