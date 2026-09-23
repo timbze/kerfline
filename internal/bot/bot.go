@@ -850,8 +850,11 @@ func richReplyOpts(msg *gotgbot.Message) *gotgbot.SendRichMessageOpts {
 	return opts
 }
 
+// chatActionOpts scopes typing to a forum topic. A group without topics
+// still sets MessageThreadId on a reply, to the id of the first message in
+// that chain. sendChatAction with that id does not show typing.
 func chatActionOpts(msg *gotgbot.Message) *gotgbot.SendChatActionOpts {
-	if msg == nil || msg.MessageThreadId == 0 {
+	if msg == nil || !msg.IsTopicMessage || msg.MessageThreadId == 0 {
 		return nil
 	}
 	return &gotgbot.SendChatActionOpts{MessageThreadId: msg.MessageThreadId}

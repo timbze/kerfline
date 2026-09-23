@@ -288,14 +288,24 @@ func TestSplitTelegram(t *testing.T) {
 }
 
 func TestChatActionOpts(t *testing.T) {
+	if chatActionOpts(nil) != nil {
+		t.Fatal("nil message")
+	}
 	if chatActionOpts(&gotgbot.Message{}) != nil {
 		t.Fatal("zero thread should omit opts")
 	}
-	opts := chatActionOpts(&gotgbot.Message{MessageThreadId: 1})
-	if opts == nil || opts.MessageThreadId != 1 {
-		t.Fatalf("typing should pass through 1: %+v", opts)
+	// Reply chain in a group without topics: thread id is the root message id.
+	if opts := chatActionOpts(&gotgbot.Message{MessageThreadId: 5}); opts != nil {
+		t.Fatalf("reply chain should omit thread, got %+v", opts)
 	}
-	opts = chatActionOpts(&gotgbot.Message{MessageThreadId: 3})
+	if opts := chatActionOpts(&gotgbot.Message{MessageThreadId: 3, IsTopicMessage: false}); opts != nil {
+		t.Fatalf("non-topic thread should omit, got %+v", opts)
+	}
+	opts := chatActionOpts(&gotgbot.Message{MessageThreadId: 1, IsTopicMessage: true})
+	if opts == nil || opts.MessageThreadId != 1 {
+		t.Fatalf("general topic typing: %+v", opts)
+	}
+	opts = chatActionOpts(&gotgbot.Message{MessageThreadId: 3, IsTopicMessage: true})
 	if opts == nil || opts.MessageThreadId != 3 {
 		t.Fatalf("typing topic 3: %+v", opts)
 	}
