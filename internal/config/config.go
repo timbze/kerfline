@@ -83,8 +83,8 @@ type Grok struct {
 	ReasoningDefault string `toml:"reasoning_default"`
 }
 
-// ReasoningEfforts lists the accepted reasoning levels, lowest first.
-var ReasoningEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+// ReasoningEfforts lists the levels grok --reasoning-effort accepts, lowest first.
+var ReasoningEfforts = []string{"low", "medium", "high", "xhigh"}
 
 // normalizeLevels lowercases, dedupes, and orders levels lowest first.
 // Unknown values sort last and are left for validate to reject.
