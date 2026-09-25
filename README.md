@@ -201,7 +201,8 @@ turn may run at: `low` | `medium` | `high` | `xhigh`, the values grok
 accepts. With two or more, the gate also picks a level per message: the
 lowest one it thinks will do the job. `/ask`, `@bot`, and “hey kerf” messages skip the reply decision
 but still get a short effort-only gate call, made after the typing indicator
-starts. With one level, that level is always used and no call is made. Leave
+starts. With `gate = false`, every answered message gets that effort-only
+call. With one level, that level is always used and no call is made. Leave
 it unset to never pass the flag.
 
 `reasoning_default` (default: the lowest listed level) is used when the gate
