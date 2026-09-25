@@ -194,6 +194,21 @@ Optional knobs in `contrib/config.example.toml` under `[grok]`: `gate`,
 `grok-4.3`, reasoning `none`. Use `omit` to leave `reasoning_effort` off the
 request for models that do not accept `none`.
 
+### Reply reasoning level
+
+`[grok].reasoning_levels` lists the `--reasoning-effort` values the full Grok
+turn may run at (`none` | `low` | `medium` | `high` | `xhigh`). With two or
+more, the gate also picks a level per message: the lowest one it thinks will
+do the job. `/ask`, `@bot`, and “hey kerf” messages skip the reply decision
+but still get a short effort-only gate call, made after the typing indicator
+starts. With one level, that level is always used and no call is made. Leave
+it unset to never pass the flag.
+
+`reasoning_default` (default: the lowest listed level) is used when the gate
+errors. A chat file can set its own `reasoning_levels` and
+`reasoning_default`. Don't also put `--reasoning-effort` in `extra_args`.
+Check which levels your reply model accepts before listing them.
+
 ### Photos, documents, and voice
 
 Kerfline files Telegram photos and documents into the chat’s git workspace.

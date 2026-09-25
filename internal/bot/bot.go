@@ -24,11 +24,14 @@ import (
 )
 
 type gater interface {
-	Decide(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (gate.Decision, error)
+	Decide(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (gate.Verdict, error)
+	// Effort picks the reply's reasoning level for a message that will be answered.
+	Effort(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (string, error)
 }
 
 type turnExec interface {
 	StartTyping() (stop func())
+	SetEffort(effort string)
 	PrepareSpeech(ctx context.Context) error
 	SpeechTranscript() string
 	Download() error
@@ -405,21 +408,27 @@ func (b *Bot) orchestrate(ctx context.Context, chat config.Chat, msg *gotgbot.Me
 		speechText = exec.SpeechTranscript()
 	}
 
+	g := b.gate
+	if g == nil {
+		g = &replyGate{bot: b}
+	}
+	levels, effort := b.reasoning(chat)
+	// Ask for an effort separately when the gate didn't run or didn't pick one.
+	pickEffort := len(levels) > 1
 	if gateApplies(b.cfg, chat, msg.GetText(), botUsername) {
 		start := time.Now()
-		g := b.gate
-		if g == nil {
-			g = &replyGate{bot: b}
-		}
-		d, err := g.Decide(ctx, chat, msg, gateUserText(msg, speechText))
+		v, err := g.Decide(ctx, chat, msg, gateUserText(msg, speechText))
 		decision := "reply"
 		if err != nil {
 			decision = "error"
-		} else if d == gate.Skip {
+		} else if v.Decision == gate.Skip {
 			decision = "skip"
 		}
 		if b.log != nil {
 			attrs := []any{"decision", decision, "chat", chat.Name, "chars", len(prompt), "duration", time.Since(start)}
+			if v.Effort != "" {
+				attrs = append(attrs, "effort", v.Effort)
+			}
 			if err != nil {
 				attrs = append(attrs, "err", err)
 				b.log.Error("gate", attrs...)
@@ -431,31 +440,105 @@ func (b *Bot) orchestrate(ctx context.Context, chat config.Chat, msg *gotgbot.Me
 			if !chatIsPrivate(msg) {
 				return nil
 			}
-		} else if d == gate.Skip {
+			// The gate just failed; don't add a second call before a fail-open reply.
+			pickEffort = false
+		} else if v.Decision == gate.Skip {
 			return nil
+		} else if v.Effort != "" {
+			effort = v.Effort
+			pickEffort = false
 		}
 	}
 
 	stop := exec.StartTyping()
 	defer stop()
+	if pickEffort {
+		effort = b.chooseEffort(ctx, g, chat, msg, prompt, effort)
+	}
+	exec.SetEffort(effort)
 	if err := exec.Download(); err != nil {
 		return err
 	}
 	return exec.Run()
 }
 
+// reasoning returns the chat's reply-model levels and fallback level.
+func (b *Bot) reasoning(chat config.Chat) ([]string, string) {
+	if b.cfg == nil {
+		return nil, ""
+	}
+	return b.cfg.Reasoning(chat)
+}
+
+// chooseEffort runs the effort-only gate call, falling back to def on error.
+func (b *Bot) chooseEffort(ctx context.Context, g gater, chat config.Chat, msg *gotgbot.Message, prompt, def string) string {
+	start := time.Now()
+	e, err := g.Effort(ctx, chat, msg, prompt)
+	if b.log != nil {
+		attrs := []any{"chat", chat.Name, "effort", e, "duration", time.Since(start)}
+		if err != nil {
+			attrs = append(attrs, "err", err, "fallback", def)
+			b.log.Error("gate effort", attrs...)
+		} else {
+			b.log.Info("gate effort", attrs...)
+		}
+	}
+	if err != nil || e == "" {
+		return def
+	}
+	return e
+}
+
+// attachmentHint tells the gate what kind of file came with the message.
+func attachmentHint(msg *gotgbot.Message) string {
+	ref := media.Extract(msg)
+	if ref == nil {
+		return ""
+	}
+	hint := ref.Kind
+	if ref.Kind == "document" && ref.MIME != "" {
+		hint += " " + ref.MIME
+	}
+	if ref.Source == "reply_to" {
+		hint += " (on the quoted message)"
+	}
+	return hint
+}
+
 type replyGate struct {
 	bot *Bot
 }
 
-func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (gate.Decision, error) {
+func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (gate.Verdict, error) {
+	if msg != nil && Vocative(msg.GetText()) {
+		return gate.Verdict{Decision: gate.Reply}, nil
+	}
+	var v gate.Verdict
+	err := g.call(ctx, chat, msg, prompt, func(ctx context.Context, c *gate.Client, in gate.Input) error {
+		var err error
+		v, err = gate.ShouldReply(ctx, c, in)
+		return err
+	})
+	return v, err
+}
+
+func (g *replyGate) Effort(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string) (string, error) {
+	var e string
+	err := g.call(ctx, chat, msg, prompt, func(ctx context.Context, c *gate.Client, in gate.Input) error {
+		var err error
+		e, err = gate.ChooseEffort(ctx, c, in)
+		return err
+	})
+	return e, err
+}
+
+// call builds the gate client and input, runs fn, and retries once after an
+// auth refresh on 401/403.
+func (g *replyGate) call(ctx context.Context, chat config.Chat, msg *gotgbot.Message, prompt string, fn func(context.Context, *gate.Client, gate.Input) error) error {
 	if msg == nil {
-		return gate.Skip, fmt.Errorf("gate: nil message")
+		return fmt.Errorf("gate: nil message")
 	}
 	text := msg.GetText()
-	if Vocative(text) {
-		return gate.Reply, nil
-	}
 
 	timeout := gateTimeout(g.bot.cfg)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -463,7 +546,7 @@ func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.M
 
 	token, err := g.bot.authToken(ctx, chat)
 	if err != nil {
-		return gate.Skip, err
+		return err
 	}
 
 	userText := strings.TrimSpace(prompt)
@@ -485,30 +568,32 @@ func (g *replyGate) Decide(ctx context.Context, chat config.Chat, msg *gotgbot.M
 	if client.Reasoning == "" {
 		client.Reasoning = "none"
 	}
+	client.Levels, _ = g.bot.reasoning(chat)
 
 	in := gate.Input{
 		ChatName:      chat.Name,
 		Private:       chatIsPrivate(msg),
 		WorkspaceHint: readWorkspaceHint(chat.Workspace),
 		Quoted:        replyContext(msg),
+		Attachment:    attachmentHint(msg),
 		UserText:      userText,
 	}
-	d, err := gate.ShouldReply(ctx, client, in)
+	err = fn(ctx, client, in)
 	if err == nil || !gate.AuthHTTP(err) || !g.bot.canRefreshAuth() {
-		return d, err
+		return err
 	}
 	if rerr := g.bot.refreshGrokAuth(ctx, chat); rerr != nil {
 		if g.bot.log != nil {
 			g.bot.log.Error("auth refresh", "chat", chat.Name, "err", rerr)
 		}
-		return d, err
+		return err
 	}
 	token, err = g.bot.authToken(ctx, chat)
 	if err != nil {
-		return d, err
+		return err
 	}
 	client.Token = token
-	return gate.ShouldReply(ctx, client, in)
+	return fn(ctx, client, in)
 }
 
 type liveTurn struct {
@@ -517,6 +602,7 @@ type liveTurn struct {
 	msg            *gotgbot.Message
 	chat           config.Chat
 	prompt         string
+	effort         string
 	req            runner.Request
 	mediaAttrs     []any
 	aborted        bool
@@ -526,6 +612,10 @@ type liveTurn struct {
 
 func (t *liveTurn) StartTyping() func() {
 	return keepTyping(t.tg, t.msg)
+}
+
+func (t *liveTurn) SetEffort(effort string) {
+	t.effort = effort
 }
 
 func (t *liveTurn) PrepareSpeech(ctx context.Context) error {
@@ -666,6 +756,10 @@ func (t *liveTurn) Run() error {
 	attrs := []any{"chat", chat.Name, "user_id", msg.From.Id}
 	attrs = append(attrs, t.mediaAttrs...)
 	attrs = append(attrs, "chars", len(t.req.Prompt))
+	t.req.Effort = t.effort
+	if t.effort != "" {
+		attrs = append(attrs, "effort", t.effort)
+	}
 	if msg.MessageThreadId != 0 {
 		attrs = append(attrs, "topic_id", msg.MessageThreadId)
 	}

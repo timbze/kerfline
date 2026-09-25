@@ -25,6 +25,12 @@ timeout = "10m"
 # gate_reasoning = "none"
 # Voice/audio at or under this length is transcribed before the gate (require_mention = false).
 # gate_speech_max = "2m"
+# Reasoning levels the full Grok turn may use (--reasoning-effort). With two or
+# more, the gate picks one per message; /ask and @bot get an effort-only call.
+# One level: always that. Unset: the flag is not passed.
+# reasoning_levels = ["low", "medium", "high", "xhigh"]
+# Used when the gate errors. Default: the lowest listed level.
+# reasoning_default = "medium"
 
 [jailbee]
 binary = "jailbee"

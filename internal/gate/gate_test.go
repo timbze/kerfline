@@ -32,7 +32,7 @@ func TestShouldReplyTrue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != Reply {
+	if d.Decision != Reply {
 		t.Fatalf("got %v, want Reply", d)
 	}
 }
@@ -53,7 +53,7 @@ func TestShouldReplyFalse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != Skip {
+	if d.Decision != Skip {
 		t.Fatalf("got %v, want Skip", d)
 	}
 }
@@ -337,5 +337,152 @@ func TestShouldReplyTruncatesWorkspaceHint(t *testing.T) {
 	}
 	if !strings.Contains(content, strings.Repeat("a", 2048)) {
 		t.Fatalf("expected 2048-byte hint in content, got len=%d", len(content))
+	}
+}
+
+// effortServer answers every request with content and records the last body.
+func effortServer(t *testing.T, content string, body *map[string]any) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if body != nil {
+			if err := json.NewDecoder(r.Body).Decode(body); err != nil {
+				t.Errorf("decode: %v", err)
+			}
+		}
+		raw, _ := json.Marshal(content)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":` + string(raw) + `}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func schemaOf(t *testing.T, req map[string]any) (map[string]any, []any) {
+	t.Helper()
+	rf := req["response_format"].(map[string]any)
+	schema := rf["json_schema"].(map[string]any)["schema"].(map[string]any)
+	props := schema["properties"].(map[string]any)
+	required, _ := schema["required"].([]any)
+	return props, required
+}
+
+func TestShouldReplyNoEffortWithOneLevel(t *testing.T) {
+	var req map[string]any
+	srv := effortServer(t, `{"respond":true}`, &req)
+	v, err := ShouldReply(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+		Levels:  []string{"high"},
+	}, Input{UserText: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Effort != "" {
+		t.Fatalf("effort %q, want empty", v.Effort)
+	}
+	props, _ := schemaOf(t, req)
+	if _, ok := props["effort"]; ok {
+		t.Fatalf("effort in schema with one level: %v", props)
+	}
+}
+
+func TestShouldReplyPicksEffort(t *testing.T) {
+	var req map[string]any
+	srv := effortServer(t, `{"respond":true,"effort":"high"}`, &req)
+	v, err := ShouldReply(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+		Levels:  []string{"low", "high"},
+	}, Input{UserText: "refactor the notes index", Attachment: "photo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Decision != Reply || v.Effort != "high" {
+		t.Fatalf("verdict %+v", v)
+	}
+	props, required := schemaOf(t, req)
+	effort, ok := props["effort"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema missing effort: %v", props)
+	}
+	enum, _ := effort["enum"].([]any)
+	if len(enum) != 2 || enum[0] != "low" || enum[1] != "high" {
+		t.Fatalf("enum %v", enum)
+	}
+	if len(required) != 2 || required[1] != "effort" {
+		t.Fatalf("required %v", required)
+	}
+	raw, _ := json.Marshal(req["messages"])
+	if !strings.Contains(string(raw), "- low:") || strings.Contains(string(raw), "- medium:") {
+		t.Fatalf("rubric should list only allowed levels: %s", raw)
+	}
+	if !strings.Contains(string(raw), "attachment: photo") {
+		t.Fatalf("attachment line missing: %s", raw)
+	}
+}
+
+func TestShouldReplyUnknownEffortDropped(t *testing.T) {
+	srv := effortServer(t, `{"respond":true,"effort":"xhigh"}`, nil)
+	v, err := ShouldReply(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+		Levels:  []string{"low", "high"},
+	}, Input{UserText: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Decision != Reply || v.Effort != "" {
+		t.Fatalf("verdict %+v, want Reply with empty effort", v)
+	}
+}
+
+func TestChooseEffort(t *testing.T) {
+	var req map[string]any
+	srv := effortServer(t, `{"effort":"medium"}`, &req)
+	e, err := ChooseEffort(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+		Levels:  []string{"low", "medium", "high"},
+	}, Input{UserText: "summarize this week"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e != "medium" {
+		t.Fatalf("effort %q", e)
+	}
+	props, required := schemaOf(t, req)
+	if _, ok := props["respond"]; ok {
+		t.Fatalf("effort-only schema has respond: %v", props)
+	}
+	if len(required) != 1 || required[0] != "effort" {
+		t.Fatalf("required %v", required)
+	}
+}
+
+func TestChooseEffortRejectsUnknown(t *testing.T) {
+	srv := effortServer(t, `{"effort":"xhigh"}`, nil)
+	_, err := ChooseEffort(context.Background(), &Client{
+		BaseURL: srv.URL,
+		HTTP:    srv.Client(),
+		Token:   "tok",
+		Levels:  []string{"low", "high"},
+	}, Input{UserText: "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestChooseEffortNoHTTPUnderTwoLevels(t *testing.T) {
+	c := &Client{BaseURL: "http://example.invalid", Token: "tok", Levels: []string{"high"}}
+	if e, err := ChooseEffort(context.Background(), c, Input{}); err != nil || e != "high" {
+		t.Fatalf("one level: %q %v", e, err)
+	}
+	c.Levels = nil
+	if e, err := ChooseEffort(context.Background(), c, Input{}); err != nil || e != "" {
+		t.Fatalf("no levels: %q %v", e, err)
 	}
 }

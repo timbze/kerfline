@@ -82,6 +82,28 @@ func TestRunOmitsRulesWhenEmpty(t *testing.T) {
 	if strings.Contains(joined, "--rules") {
 		t.Fatalf("unexpected --rules in %q", joined)
 	}
+	if strings.Contains(joined, "--reasoning-effort") {
+		t.Fatalf("unexpected --reasoning-effort in %q", joined)
+	}
+}
+
+func TestRunEffortFlag(t *testing.T) {
+	r := New()
+	r.Resolve = identityResolve
+	var gotArgs []string
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "true")
+	}
+	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
+	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping", Effort: "high"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if !containsSeq(gotArgs, []string{"--reasoning-effort", "high"}) {
+		t.Fatalf("effort flag missing: %q", strings.Join(gotArgs, " "))
+	}
 }
 
 func TestRunDenyFlags(t *testing.T) {
