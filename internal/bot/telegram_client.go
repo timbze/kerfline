@@ -23,7 +23,7 @@ const (
 	// Slack so RTT + JSON decode still fit after Telegram's 25s hold.
 	pollRequestTimeout = 35 * time.Second
 	// Exit (systemd restarts) if getUpdates has not returned in this long.
-	pollWatchdog = 90 * time.Second
+	pollWatchdog   = 90 * time.Second
 	apiHTTPTimeout = 90 * time.Second
 )
 
