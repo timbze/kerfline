@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -74,6 +75,35 @@ type Grok struct {
 	GateTimeout     string   `toml:"gate_timeout"`
 	GateReasoning   string   `toml:"gate_reasoning"`
 	GateSpeechMax   string   `toml:"gate_speech_max"`
+	// ReasoningLevels are the --reasoning-effort values the reply model may
+	// run at. Two or more: the gate picks one per turn. One: always that.
+	// Empty: the flag is not passed.
+	ReasoningLevels []string `toml:"reasoning_levels"`
+	// ReasoningDefault is used when the gate can't pick. Empty = lowest level.
+	ReasoningDefault string `toml:"reasoning_default"`
+}
+
+// ReasoningEfforts lists the accepted reasoning levels, lowest first.
+var ReasoningEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+
+// normalizeLevels lowercases, dedupes, and orders levels lowest first.
+// Unknown values sort last and are left for validate to reject.
+func normalizeLevels(in []string) []string {
+	var out []string
+	for _, l := range in {
+		l = strings.ToLower(strings.TrimSpace(l))
+		if l != "" && !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	rank := func(l string) int {
+		if i := slices.Index(ReasoningEfforts, l); i >= 0 {
+			return i
+		}
+		return len(ReasoningEfforts)
+	}
+	slices.SortStableFunc(out, func(a, b string) int { return rank(a) - rank(b) })
+	return out
 }
 
 // GateEnabled is true unless gate is explicitly false.
@@ -124,6 +154,10 @@ type Chat struct {
 	TeaLogin         string  `toml:"tea_login"`
 	// Vision overrides [media].vision for this chat. Empty inherits.
 	Vision string `toml:"vision"`
+	// ReasoningLevels overrides [grok].reasoning_levels for this chat. Empty inherits.
+	ReasoningLevels []string `toml:"reasoning_levels"`
+	// ReasoningDefault overrides [grok].reasoning_default for this chat.
+	ReasoningDefault string `toml:"reasoning_default"`
 }
 
 type TelegramKind int
@@ -222,6 +256,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Grok.GateSpeechMax == "" {
 		cfg.Grok.GateSpeechMax = "2m"
 	}
+	cfg.Grok.ReasoningLevels = normalizeLevels(cfg.Grok.ReasoningLevels)
+	cfg.Grok.ReasoningDefault = strings.ToLower(strings.TrimSpace(cfg.Grok.ReasoningDefault))
 	if cfg.Jailbee.Binary == "" {
 		cfg.Jailbee.Binary = "jailbee"
 	}
@@ -283,6 +319,8 @@ func loadChats(cfg *Config, dir string) error {
 			return fmt.Errorf("%s: telegram_topic_id must be >= 0", path)
 		}
 		chat.Vision = strings.ToLower(strings.TrimSpace(chat.Vision))
+		chat.ReasoningLevels = normalizeLevels(chat.ReasoningLevels)
+		chat.ReasoningDefault = strings.ToLower(strings.TrimSpace(chat.ReasoningDefault))
 		if chat.TelegramChatID == 0 {
 			// Placeholder until /chatid is pasted in. Skip, don't fail startup.
 			continue
@@ -338,15 +376,65 @@ func (c *Config) validate() error {
 	if !strings.HasPrefix(c.STT.AuthPath, "/") || strings.Contains(c.STT.AuthPath, "..") {
 		return fmt.Errorf("stt.auth_path must be an absolute container path")
 	}
+	if err := validReasoning(c.Grok.ReasoningLevels, c.Grok.ReasoningDefault, "grok"); err != nil {
+		return err
+	}
+	levelsUsed := len(c.Grok.ReasoningLevels) > 0
 	for _, ch := range c.Chats {
-		if ch.Vision == "" {
-			continue
+		if ch.Vision != "" {
+			if err := validVision(ch.Vision, fmt.Sprintf("chat %q vision", ch.Name)); err != nil {
+				return err
+			}
 		}
-		if err := validVision(ch.Vision, fmt.Sprintf("chat %q vision", ch.Name)); err != nil {
+		levels, def := c.Reasoning(ch)
+		if ch.ReasoningDefault != "" && !slices.Contains(levels, def) {
+			return fmt.Errorf("chat %q reasoning_default %q is not in its reasoning_levels", ch.Name, def)
+		}
+		if err := validReasoning(ch.ReasoningLevels, "", fmt.Sprintf("chat %q", ch.Name)); err != nil {
 			return err
+		}
+		levelsUsed = levelsUsed || len(levels) > 0
+	}
+	if levelsUsed {
+		for _, a := range c.Grok.ExtraArgs {
+			if a == "--reasoning-effort" || a == "--effort" ||
+				strings.HasPrefix(a, "--reasoning-effort=") || strings.HasPrefix(a, "--effort=") {
+				return fmt.Errorf("grok.extra_args sets %s; remove it when reasoning_levels is set", a)
+			}
 		}
 	}
 	return nil
+}
+
+func validReasoning(levels []string, def, field string) error {
+	for _, l := range levels {
+		if !slices.Contains(ReasoningEfforts, l) {
+			return fmt.Errorf("%s.reasoning_levels: %q must be one of %s", field, l, strings.Join(ReasoningEfforts, ", "))
+		}
+	}
+	if def != "" && !slices.Contains(levels, def) {
+		return fmt.Errorf("%s.reasoning_default %q is not in reasoning_levels", field, def)
+	}
+	return nil
+}
+
+// Reasoning returns the chat's allowed reasoning levels (lowest first) and
+// the level to use when the gate can't pick. Both are empty when unset.
+func (c *Config) Reasoning(ch Chat) ([]string, string) {
+	levels, def := c.Grok.ReasoningLevels, c.Grok.ReasoningDefault
+	if len(ch.ReasoningLevels) > 0 {
+		levels = ch.ReasoningLevels
+		if !slices.Contains(levels, def) {
+			def = ""
+		}
+	}
+	if ch.ReasoningDefault != "" {
+		def = ch.ReasoningDefault
+	}
+	if def == "" && len(levels) > 0 {
+		def = levels[0]
+	}
+	return levels, def
 }
 
 func validVision(v, field string) error {

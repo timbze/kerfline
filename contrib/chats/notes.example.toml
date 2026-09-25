@@ -12,6 +12,9 @@ allowed_user_ids = []
 require_mention = true
 # Optional. Overrides [media].vision for this chat (auto | always | never).
 # vision = "never"
+# Optional. Override [grok].reasoning_levels / reasoning_default for this chat.
+# reasoning_levels = ["low", "medium"]
+# reasoning_default = "low"
 workspace = "/home/you/kerfline-workspaces/notes"
 # Short name from `jailbee ls` in that workspace (usually "main").
 # Kerfline execs the listing's Incus full_name so a foreign container

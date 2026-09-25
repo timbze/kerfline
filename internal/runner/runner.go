@@ -25,6 +25,7 @@ type Request struct {
 	Prompt     string
 	PromptFile string
 	Deny       []string
+	Effort     string // --reasoning-effort; empty = not passed
 }
 
 type Runner struct {
@@ -85,6 +86,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	}
 	for _, rule := range req.Deny {
 		grok = append(grok, "--deny", rule)
+	}
+	if req.Effort != "" {
+		grok = append(grok, "--reasoning-effort", req.Effort)
 	}
 	grok = append(grok, cfg.Grok.ExtraArgs...)
 	grok = append(grok, "--output-format", "streaming-json")

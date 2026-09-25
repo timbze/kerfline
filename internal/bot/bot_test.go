@@ -358,20 +358,39 @@ func TestTypingLoopSendsUntilCancel(t *testing.T) {
 type stubGater struct {
 	called       int
 	d            gate.Decision
+	effort       string // Verdict.Effort from Decide
 	err          error
 	lastUserText string
+
+	effortCalled int
+	pick         string // Effort result
+	pickErr      error
+	exec         *recordingExec // if set, Effort records an event on it
 }
 
-func (s *stubGater) Decide(_ context.Context, _ config.Chat, _ *gotgbot.Message, userText string) (gate.Decision, error) {
+func (s *stubGater) Decide(_ context.Context, _ config.Chat, _ *gotgbot.Message, userText string) (gate.Verdict, error) {
 	s.called++
 	s.lastUserText = userText
-	return s.d, s.err
+	return gate.Verdict{Decision: s.d, Effort: s.effort}, s.err
+}
+
+func (s *stubGater) Effort(context.Context, config.Chat, *gotgbot.Message, string) (string, error) {
+	s.effortCalled++
+	if s.exec != nil {
+		s.exec.events = append(s.exec.events, "effort")
+	}
+	return s.pick, s.pickErr
 }
 
 type recordingExec struct {
 	events     []string
 	transcript string
 	speechErr  error
+	effort     string
+}
+
+func (r *recordingExec) SetEffort(effort string) {
+	r.effort = effort
 }
 
 func (r *recordingExec) StartTyping() func() {
@@ -607,6 +626,170 @@ func TestOrchestrateGroupErrorFailClosed(t *testing.T) {
 	}
 }
 
+func levelsBot(t *testing.T, g gater, levels ...string) *Bot {
+	t.Helper()
+	b := silentBot(t, g)
+	b.cfg.Grok.ReasoningLevels = levels
+	b.cfg.Grok.ReasoningDefault = "medium"
+	return b
+}
+
+func TestOrchestrateExplicitAskPicksEffortAfterTyping(t *testing.T) {
+	g := &stubGater{d: gate.Skip, pick: "high"}
+	b := levelsBot(t, g, "low", "medium", "high")
+	exec := &recordingExec{}
+	g.exec = exec
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask plan the move"), "plan the move", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.called != 0 || g.effortCalled != 1 {
+		t.Fatalf("decide %d, effort %d; want 0, 1", g.called, g.effortCalled)
+	}
+	if exec.effort != "high" {
+		t.Fatalf("effort %q, want high", exec.effort)
+	}
+	assertEvents(t, exec.events, []string{"typing", "effort", "download", "run"})
+}
+
+func TestOrchestrateNoLevelsNoEffort(t *testing.T) {
+	g := &stubGater{d: gate.Skip, pick: "high"}
+	b := silentBot(t, g)
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.effortCalled != 0 || exec.effort != "" {
+		t.Fatalf("effort called %d, effort %q", g.effortCalled, exec.effort)
+	}
+}
+
+func TestOrchestrateOneLevelNoCall(t *testing.T) {
+	g := &stubGater{d: gate.Skip}
+	b := silentBot(t, g)
+	b.cfg.Grok.ReasoningLevels = []string{"high"}
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.effortCalled != 0 || exec.effort != "high" {
+		t.Fatalf("effort called %d, effort %q", g.effortCalled, exec.effort)
+	}
+}
+
+func TestOrchestrateGateVerdictEffortUsed(t *testing.T) {
+	g := &stubGater{d: gate.Reply, effort: "low"}
+	b := levelsBot(t, g, "low", "medium", "high")
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("buy milk"), "buy milk", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.called != 1 || g.effortCalled != 0 {
+		t.Fatalf("decide %d, effort %d; want 1, 0", g.called, g.effortCalled)
+	}
+	if exec.effort != "low" {
+		t.Fatalf("effort %q, want low", exec.effort)
+	}
+}
+
+func TestOrchestrateGateReplyWithoutEffortAsks(t *testing.T) {
+	// Vocative replies and out-of-range picks come back with no effort.
+	g := &stubGater{d: gate.Reply, pick: "high"}
+	b := levelsBot(t, g, "low", "medium", "high")
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("hey kerf plan it"), "hey kerf plan it", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.effortCalled != 1 || exec.effort != "high" {
+		t.Fatalf("effort called %d, effort %q", g.effortCalled, exec.effort)
+	}
+}
+
+func TestOrchestrateEffortErrorUsesDefault(t *testing.T) {
+	g := &stubGater{pickErr: errors.New("http 500")}
+	b := levelsBot(t, g, "low", "medium", "high")
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exec.effort != "medium" {
+		t.Fatalf("effort %q, want default medium", exec.effort)
+	}
+	assertEvents(t, exec.events, []string{"typing", "download", "run"})
+}
+
+func TestOrchestratePrivateGateErrorSkipsEffortCall(t *testing.T) {
+	g := &stubGater{err: errors.New("http 500"), pick: "high"}
+	b := levelsBot(t, g, "low", "medium", "high")
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, privateMsg("lol"), "lol", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.effortCalled != 0 || exec.effort != "medium" {
+		t.Fatalf("effort called %d, effort %q", g.effortCalled, exec.effort)
+	}
+}
+
+func TestOrchestrateGateDisabledStillPicksEffort(t *testing.T) {
+	off := false
+	g := &stubGater{pick: "low"}
+	b := levelsBot(t, g, "low", "high")
+	b.cfg.Grok.Gate = &off
+	exec := &recordingExec{}
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("buy milk"), "buy milk", "notesbot", exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.called != 0 || g.effortCalled != 1 || exec.effort != "low" {
+		t.Fatalf("decide %d, effort %d, effort %q", g.called, g.effortCalled, exec.effort)
+	}
+}
+
+func TestReplyGateEffortSendsChatLevels(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "tok")
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"effort\":\"xhigh\"}"}}]}`))
+	}))
+	defer srv.Close()
+
+	b := silentBot(t, nil)
+	b.cfg.STT.BaseURL = srv.URL
+	b.cfg.Grok.ReasoningLevels = []string{"low", "medium"}
+	g := &replyGate{bot: b}
+	chat := config.Chat{Name: "notes", Workspace: t.TempDir(), ReasoningLevels: []string{"high", "xhigh"}}
+	msg := &gotgbot.Message{
+		Caption:  "/ask what does this say",
+		Document: &gotgbot.Document{FileId: "d", FileUniqueId: "u", MimeType: "application/pdf"},
+		From:     &gotgbot.User{Id: 42},
+		Chat:     gotgbot.Chat{Id: -1001, Type: gotgbot.ChatTypeGroup},
+	}
+	e, err := g.Effort(context.Background(), chat, msg, "what does this say")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e != "xhigh" {
+		t.Fatalf("effort %q", e)
+	}
+	raw, _ := json.Marshal(gotBody)
+	if !strings.Contains(string(raw), `"enum":["high","xhigh"]`) {
+		t.Fatalf("chat levels not sent: %s", raw)
+	}
+	if !strings.Contains(string(raw), "attachment: document application/pdf") {
+		t.Fatalf("attachment hint missing: %s", raw)
+	}
+}
+
 func TestReplyGateVocativeNoHTTP(t *testing.T) {
 	b := silentBot(t, nil)
 	g := &replyGate{bot: b}
@@ -614,7 +797,7 @@ func TestReplyGateVocativeNoHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != gate.Reply {
+	if d.Decision != gate.Reply {
 		t.Fatalf("got %v, want Reply", d)
 	}
 }
@@ -656,7 +839,7 @@ func TestReplyGateReplyToBotHitsHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != gate.Skip {
+	if d.Decision != gate.Skip {
 		t.Fatalf("got %v, want Skip", d)
 	}
 	if called != 1 {
@@ -699,7 +882,7 @@ func TestReplyGateHTTPSendsReasoningNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != gate.Reply {
+	if d.Decision != gate.Reply {
 		t.Fatalf("got %v, want Reply", d)
 	}
 	if gotBody["model"] != "grok-4.3" {
@@ -747,7 +930,7 @@ func TestReplyGateWorkspaceHintReadErrorEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != gate.Skip {
+	if d.Decision != gate.Skip {
 		t.Fatalf("got %v, want Skip", d)
 	}
 	if !strings.Contains(userContent, "workspace_hint:\n") {
@@ -787,7 +970,7 @@ func TestReplyGateRefreshesOn403(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d != gate.Reply {
+	if d.Decision != gate.Reply {
 		t.Fatalf("got %v, want Reply", d)
 	}
 	if refresh != 1 {

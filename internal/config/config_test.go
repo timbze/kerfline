@@ -569,3 +569,86 @@ gate_reasoning = "omit"
 		t.Fatalf("GateReasoning = %q, want omit", cfg.Grok.GateReasoning)
 	}
 }
+
+func TestReasoningLevelsNormalized(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml": `[telegram]
+mode = "poll"
+[grok]
+reasoning_levels = ["HIGH", "low", "medium", "low"]
+reasoning_default = "Medium"
+`,
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+		"chats/b.toml": "telegram_chat_id = 2\nworkspace = \"/b\"\nreasoning_levels = [\"xhigh\", \"high\"]\n",
+		"chats/c.toml": "telegram_chat_id = 3\nworkspace = \"/c\"\nreasoning_default = \"high\"\n",
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Chat{}
+	for _, ch := range cfg.Chats {
+		byName[ch.Name] = ch
+	}
+	cases := []struct {
+		chat   string
+		levels string
+		def    string
+	}{
+		{"a", "low,medium,high", "medium"},
+		{"b", "high,xhigh", "high"}, // global default not allowed here: lowest
+		{"c", "low,medium,high", "high"},
+	}
+	for _, tc := range cases {
+		levels, def := cfg.Reasoning(byName[tc.chat])
+		if strings.Join(levels, ",") != tc.levels || def != tc.def {
+			t.Fatalf("chat %s: levels %v default %q, want %s %q", tc.chat, levels, def, tc.levels, tc.def)
+		}
+	}
+}
+
+func TestReasoningUnsetIsEmpty(t *testing.T) {
+	cfg := pollTree(t, map[string]string{
+		"a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	levels, def := cfg.Reasoning(cfg.Chats[0])
+	if len(levels) != 0 || def != "" {
+		t.Fatalf("levels %v default %q, want empty", levels, def)
+	}
+}
+
+func TestReasoningInvalid(t *testing.T) {
+	cases := map[string]struct {
+		grok string
+		chat string
+	}{
+		"unknown level":        {grok: `reasoning_levels = ["low", "max"]`},
+		"default not in list":  {grok: "reasoning_levels = [\"low\"]\nreasoning_default = \"high\""},
+		"default without list": {grok: `reasoning_default = "low"`},
+		"chat unknown level":   {chat: `reasoning_levels = ["turbo"]`},
+		"chat default outside": {grok: `reasoning_levels = ["low", "medium"]`, chat: `reasoning_default = "xhigh"`},
+		"extra_args conflict":  {grok: "reasoning_levels = [\"low\", \"high\"]\nextra_args = [\"--effort\", \"high\"]"},
+		"extra_args eq form":   {grok: "reasoning_levels = [\"low\", \"high\"]\nextra_args = [\"--reasoning-effort=high\"]"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := writeTree(t, map[string]string{
+				"config.toml":  "[telegram]\nmode = \"poll\"\n[grok]\n" + tc.grok + "\n",
+				"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n" + tc.chat + "\n",
+			})
+			if _, err := Load(dir); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestExtraArgsEffortAllowedWithoutLevels(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"config.toml":  "[telegram]\nmode = \"poll\"\n[grok]\nextra_args = [\"--effort\", \"high\"]\n",
+		"chats/a.toml": "telegram_chat_id = 1\nworkspace = \"/a\"\n",
+	})
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
+	}
+}
