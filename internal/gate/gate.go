@@ -56,7 +56,6 @@ const (
 
 // levelGuide describes each reasoning level for the effort rubric.
 var levelGuide = map[string]string{
-	"none":   "trivial acknowledgement or a fact to file as-is",
 	"low":    "file a note, append to a list, simple lookup",
 	"medium": "ordinary edits, summaries, short answers that need the workspace",
 	"high":   "multi-file changes, planning, reasoning across workspace content",

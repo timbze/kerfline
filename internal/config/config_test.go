@@ -623,6 +623,7 @@ func TestReasoningInvalid(t *testing.T) {
 		chat string
 	}{
 		"unknown level":        {grok: `reasoning_levels = ["low", "max"]`},
+		"none not accepted":    {grok: `reasoning_levels = ["none", "low"]`},
 		"default not in list":  {grok: "reasoning_levels = [\"low\"]\nreasoning_default = \"high\""},
 		"default without list": {grok: `reasoning_default = "low"`},
 		"chat unknown level":   {chat: `reasoning_levels = ["turbo"]`},
