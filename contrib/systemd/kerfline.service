@@ -1,6 +1,6 @@
 [Unit]
-Description=Kerfline — Telegram to a JailBee Grok workspace
-After=network-online.target incus.service
+Description=Kerfline — Telegram to a sandboxed Grok workspace
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -9,7 +9,9 @@ ExecStart=%h/.local/bin/kerfline
 # Non-zero exit includes a hung getUpdates watchdog; bring the poller back.
 Restart=on-failure
 RestartSec=3
-Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/bin
+# ~/.grok/bin holds the grok executable. A mise shim named grok points at mise
+# itself, and that cannot run inside the sandbox.
+Environment=PATH=%h/.grok/bin:%h/.local/bin:%h/.local/share/mise/shims:/usr/bin
 EnvironmentFile=-%h/.config/kerfline/env
 
 [Install]

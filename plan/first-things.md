@@ -1,5 +1,7 @@
 # First things — easy setup without tightening JailBee
 
+The MXC branch supersedes this note. Kerfline no longer uses JailBee or Incus.
+
 Goal: anyone on a Linux host can get Kerfline talking to one Telegram chat without guessing which of six layers is broken. Kerfline stays MIT. JailBee stays a separate GPL-3.0-or-later runtime.
 
 This is the setup plan, not a rewrite of the bot.

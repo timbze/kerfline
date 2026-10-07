@@ -44,7 +44,6 @@ telegram_chat_id = -1001
 allowed_user_ids = [42]
 require_mention = true
 workspace = "/tmp/notes"
-jailbee_container = "main"
 gitea_remote = "https://gitea.example.com/bot/notes"
 tea_login = "notes-bot"
 `,
@@ -66,8 +65,12 @@ tea_login = "notes-bot"
 	if !ch.AllowsUser(42) || ch.AllowsUser(7) {
 		t.Fatal("allowlist")
 	}
-	if ch.JailbeeConfig() != "/tmp/notes/.jailbee/config.yaml" {
-		t.Fatalf("config path: %s", ch.JailbeeConfig())
+	home, err := cfg.SandboxHome(ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(home, string(filepath.Separator)+"notes"+string(filepath.Separator)+"home") {
+		t.Fatalf("sandbox home: %s", home)
 	}
 	if ch.TeaLogin != "notes-bot" {
 		t.Fatal("tea_login should round-trip for later wiring")
@@ -105,8 +108,11 @@ mode = "poll"`,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Chats) != 0 {
-		t.Fatalf("pending chat should be skipped, got %d", len(cfg.Chats))
+	if len(cfg.Chats) != 1 || cfg.Chats[0].Name != "pending" {
+		t.Fatalf("pending chat should stay loadable for login, got %+v", cfg.Chats)
+	}
+	if _, kind := cfg.LookupTelegram(0, 0); kind != TelegramUnknownChat {
+		t.Fatalf("chat id 0 must not bind, kind %d", kind)
 	}
 }
 
@@ -324,8 +330,15 @@ func TestSTTDefaults(t *testing.T) {
 	if cfg.STT.Timeout != "2m" {
 		t.Fatalf("timeout %q", cfg.STT.Timeout)
 	}
-	if cfg.STT.AuthPath != "/home/dev/.grok/auth.json" {
+	if cfg.STT.AuthPath != "" {
 		t.Fatalf("auth %q", cfg.STT.AuthPath)
+	}
+	auth, err := cfg.AuthFile(cfg.Chats[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(auth, filepath.Join("a", "home", ".grok", "auth.json")) {
+		t.Fatalf("auth file %s", auth)
 	}
 	if cfg.STTTimeout() != 2*time.Minute {
 		t.Fatalf("dur %s", cfg.STTTimeout())

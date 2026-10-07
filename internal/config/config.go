@@ -32,7 +32,7 @@ const (
 type Config struct {
 	Telegram Telegram `toml:"telegram"`
 	Grok     Grok     `toml:"grok"`
-	Jailbee  Jailbee  `toml:"jailbee"`
+	MXC      MXC      `toml:"mxc"`
 	Media    Media    `toml:"media"`
 	STT      STT      `toml:"stt"`
 	Chats    []Chat   `toml:"-"`
@@ -126,8 +126,17 @@ func (g Grok) SpeechMax() time.Duration {
 	return d
 }
 
-type Jailbee struct {
+// MXC is the Microsoft Execution Containers bubblewrap sandbox.
+type MXC struct {
+	// Binary is the Linux MXC executor. Default "lxc-exec".
 	Binary string `toml:"binary"`
+	// GrokBin is the grok CLI. Empty looks it up on PATH.
+	GrokBin string `toml:"grok_bin"`
+	// StateDir holds one sandbox home per chat. Empty uses
+	// $XDG_STATE_HOME/kerfline/sandboxes or ~/.local/state/kerfline/sandboxes.
+	StateDir string `toml:"state_dir"`
+	// ReadonlyPaths are extra host directories visible read-only in every sandbox.
+	ReadonlyPaths []string `toml:"readonly_paths"`
 }
 
 type Media struct {
@@ -143,15 +152,14 @@ type STT struct {
 }
 
 type Chat struct {
-	Name             string  `toml:"name"`
-	TelegramChatID   int64   `toml:"telegram_chat_id"`
-	TelegramTopicID  int64   `toml:"telegram_topic_id"` // 0 = whole chat
-	AllowedUserIDs   []int64 `toml:"allowed_user_ids"`
-	RequireMention   bool    `toml:"require_mention"`
-	Workspace        string  `toml:"workspace"`
-	JailbeeContainer string  `toml:"jailbee_container"`
-	GiteaRemote      string  `toml:"gitea_remote"`
-	TeaLogin         string  `toml:"tea_login"`
+	Name            string  `toml:"name"`
+	TelegramChatID  int64   `toml:"telegram_chat_id"`
+	TelegramTopicID int64   `toml:"telegram_topic_id"` // 0 = whole chat
+	AllowedUserIDs  []int64 `toml:"allowed_user_ids"`
+	RequireMention  bool    `toml:"require_mention"`
+	Workspace       string  `toml:"workspace"`
+	GiteaRemote     string  `toml:"gitea_remote"`
+	TeaLogin        string  `toml:"tea_login"`
 	// Vision overrides [media].vision for this chat. Empty inherits.
 	Vision string `toml:"vision"`
 	// ReasoningLevels overrides [grok].reasoning_levels for this chat. Empty inherits.
@@ -258,9 +266,11 @@ func applyDefaults(cfg *Config) {
 	}
 	cfg.Grok.ReasoningLevels = normalizeLevels(cfg.Grok.ReasoningLevels)
 	cfg.Grok.ReasoningDefault = strings.ToLower(strings.TrimSpace(cfg.Grok.ReasoningDefault))
-	if cfg.Jailbee.Binary == "" {
-		cfg.Jailbee.Binary = "jailbee"
+	if cfg.MXC.Binary == "" {
+		cfg.MXC.Binary = "lxc-exec"
 	}
+	cfg.MXC.GrokBin = strings.TrimSpace(cfg.MXC.GrokBin)
+	cfg.MXC.StateDir = strings.TrimSpace(cfg.MXC.StateDir)
 	if cfg.Media.MaxFileBytes == 0 {
 		cfg.Media.MaxFileBytes = defaultMaxFileBytes
 	}
@@ -278,9 +288,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.STT.Timeout == "" {
 		cfg.STT.Timeout = "2m"
 	}
-	if cfg.STT.AuthPath == "" {
-		cfg.STT.AuthPath = "/home/dev/.grok/auth.json"
-	}
+	cfg.STT.AuthPath = strings.TrimSpace(cfg.STT.AuthPath)
 }
 
 func loadChats(cfg *Config, dir string) error {
@@ -309,9 +317,6 @@ func loadChats(cfg *Config, dir string) error {
 		if chat.Name == "" {
 			chat.Name = strings.TrimSuffix(e.Name(), ".toml")
 		}
-		if chat.JailbeeContainer == "" {
-			chat.JailbeeContainer = "main"
-		}
 		if chat.Workspace == "" {
 			return fmt.Errorf("%s: workspace is required", path)
 		}
@@ -321,19 +326,17 @@ func loadChats(cfg *Config, dir string) error {
 		chat.Vision = strings.ToLower(strings.TrimSpace(chat.Vision))
 		chat.ReasoningLevels = normalizeLevels(chat.ReasoningLevels)
 		chat.ReasoningDefault = strings.ToLower(strings.TrimSpace(chat.ReasoningDefault))
-		if chat.TelegramChatID == 0 {
-			// Placeholder until /chatid is pasted in. Skip, don't fail startup.
-			continue
-		}
-		key := tgKey{chat.TelegramChatID, chat.TelegramTopicID}
-		if prev, ok := seenIDs[key]; ok {
-			return fmt.Errorf("duplicate telegram_chat_id %d topic_id %d (%s and %s)", chat.TelegramChatID, chat.TelegramTopicID, prev, chat.Name)
-		}
 		if _, ok := seenNames[chat.Name]; ok {
 			return fmt.Errorf("duplicate chat name %q", chat.Name)
 		}
-		seenIDs[key] = chat.Name
 		seenNames[chat.Name] = struct{}{}
+		if chat.TelegramChatID != 0 {
+			key := tgKey{chat.TelegramChatID, chat.TelegramTopicID}
+			if prev, ok := seenIDs[key]; ok {
+				return fmt.Errorf("duplicate telegram_chat_id %d topic_id %d (%s and %s)", chat.TelegramChatID, chat.TelegramTopicID, prev, chat.Name)
+			}
+			seenIDs[key] = chat.Name
+		}
 		cfg.Chats = append(cfg.Chats, chat)
 	}
 	if len(entries) == 0 {
@@ -373,8 +376,19 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("grok.gate_reasoning must be none, low, medium, high, xhigh, or omit")
 	}
-	if !strings.HasPrefix(c.STT.AuthPath, "/") || strings.Contains(c.STT.AuthPath, "..") {
-		return fmt.Errorf("stt.auth_path must be an absolute container path")
+	if c.MXC.GrokBin != "" && !filepath.IsAbs(c.MXC.GrokBin) {
+		return fmt.Errorf("mxc.grok_bin must be absolute")
+	}
+	if c.MXC.StateDir != "" && !filepath.IsAbs(c.MXC.StateDir) {
+		return fmt.Errorf("mxc.state_dir must be absolute")
+	}
+	for _, p := range c.MXC.ReadonlyPaths {
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("mxc.readonly_paths entry %q must be absolute", p)
+		}
+	}
+	if c.STT.AuthPath != "" && !filepath.IsAbs(c.STT.AuthPath) {
+		return fmt.Errorf("stt.auth_path must be absolute")
 	}
 	if err := validReasoning(c.Grok.ReasoningLevels, c.Grok.ReasoningDefault, "grok"); err != nil {
 		return err
@@ -392,6 +406,17 @@ func (c *Config) validate() error {
 		}
 		if err := validReasoning(ch.ReasoningLevels, "", fmt.Sprintf("chat %q", ch.Name)); err != nil {
 			return err
+		}
+		if !filepath.IsAbs(ch.Workspace) {
+			return fmt.Errorf("chat %q workspace must be absolute", ch.Name)
+		}
+		if _, err := c.SandboxHome(ch); err != nil {
+			return fmt.Errorf("chat %q: %w", ch.Name, err)
+		}
+		if c.STT.AuthPath != "" {
+			if _, err := c.AuthFile(ch); err != nil {
+				return fmt.Errorf("chat %q: %w", ch.Name, err)
+			}
 		}
 		levelsUsed = levelsUsed || len(levels) > 0
 	}
@@ -482,7 +507,7 @@ func (c *Config) LookupTelegram(chatID, threadID int64) (Chat, TelegramKind) {
 	haveCatchAll := false
 	sawChatID := false
 	for _, ch := range c.Chats {
-		if ch.TelegramChatID != chatID {
+		if ch.TelegramChatID == 0 || ch.TelegramChatID != chatID {
 			continue
 		}
 		sawChatID = true
@@ -515,6 +540,69 @@ func (ch Chat) AllowsUser(userID int64) bool {
 	return false
 }
 
-func (ch Chat) JailbeeConfig() string {
-	return filepath.Join(ch.Workspace, ".jailbee", "config.yaml")
+// DefaultSandboxRoot is the per-chat sandbox directory when mxc.state_dir is empty.
+func DefaultSandboxRoot() string {
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+		return filepath.Join(xdg, "kerfline", "sandboxes")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".local", "state", "kerfline", "sandboxes")
+}
+
+// SandboxHome is the HOME directory MXC gives this chat.
+func (c *Config) SandboxHome(ch Chat) (string, error) {
+	if err := safeChatName(ch.Name); err != nil {
+		return "", err
+	}
+	root := c.MXC.StateDir
+	if root == "" {
+		root = DefaultSandboxRoot()
+	}
+	if root == "" || !filepath.IsAbs(root) {
+		return "", fmt.Errorf("mxc state dir is not an absolute path")
+	}
+	return filepath.Join(root, ch.Name, "home"), nil
+}
+
+// AuthFile is the host path of this chat's Grok auth.json.
+// An empty stt.auth_path uses <sandbox home>/.grok/auth.json.
+// A set path must sit inside that home.
+func (c *Config) AuthFile(ch Chat) (string, error) {
+	home, err := c.SandboxHome(ch)
+	if err != nil {
+		return "", err
+	}
+	if c.STT.AuthPath == "" {
+		return filepath.Join(home, ".grok", "auth.json"), nil
+	}
+	if err := pathInside(home, c.STT.AuthPath); err != nil {
+		return "", fmt.Errorf("stt.auth_path: %w", err)
+	}
+	return filepath.Clean(c.STT.AuthPath), nil
+}
+
+func safeChatName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("chat name %q cannot be a path", name)
+	}
+	return nil
+}
+
+func pathInside(root, candidate string) error {
+	root = filepath.Clean(root)
+	candidate = filepath.Clean(candidate)
+	if !filepath.IsAbs(candidate) {
+		return fmt.Errorf("path must be absolute")
+	}
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s is outside %s", candidate, root)
+	}
+	return nil
 }

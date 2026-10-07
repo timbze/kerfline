@@ -1,8 +1,8 @@
 # Kerfline
 
-Go Telegram bot. Each chat maps to one git **workspace**. Grok runs inside a [JailBee](https://github.com/VRTFinland/jailbee) container for that workspace, not on the host.
+Go Telegram bot. Each chat maps to one git **workspace**. Grok runs inside a [Microsoft Execution Containers](https://github.com/microsoft/mxc) bubblewrap sandbox for that workspace, not on the host.
 
-This repo is the host bot. Workspace repos (notes, etc.) are separate git trees with their own `.jailbee/` and `AGENTS.md`. Do not add JailBee config here unless asked.
+This repo is the host bot. Workspace repos (notes, etc.) are separate git trees with their own `AGENTS.md`. Do not add MXC source here unless asked.
 
 ## Commands
 
@@ -21,7 +21,7 @@ Runtime config is `~/.config/kerfline/` (not in git): `config.toml`, `chats/*.to
 | `cmd/kerfline` | Host process |
 | `internal/bot` | Telegram handlers, `/kerf` / mention triggers |
 | `internal/config` | TOML load; embeds default Grok rules |
-| `internal/runner` | `jailbee exec … -- grok` |
+| `internal/runner` | `lxc-exec` bubblewrap sandbox around `grok` |
 | `internal/media` | Stage inbound Telegram files; upload outbound Markdown images |
 | `internal/session` | Per-chat Grok session ids; resume within 4h idle |
 | `contrib/` | Example config and systemd unit |
@@ -42,8 +42,8 @@ Telegram formatting, “don’t narrate”, and attachment rules belong in `inte
 
 ## Constraints
 
-- MIT. JailBee is a separate GPL-3.0-or-later runtime. Do not copy JailBee source, `install.d` snippets, or large chunks of its docs into this tree.
-- Talk to JailBee only as a child process (`jailbee exec … -- grok …`).
+- MIT. MXC is a separate MIT runtime. Do not copy MXC source or large chunks of its docs into this tree.
+- Talk to MXC only as a child process (`lxc-exec --config …`).
 - Gitea `tea` keys exist on chat files but are unused. When wired up, use a dedicated Gitea user invited to that one repo — never the host `tea` login.
 - Never put personal names in captions, file paths, examples, tests, documentation, or commit messages. Use generic placeholders.
 - Do not hard-code host paths like `/home/you/…` in new examples; keep `contrib/` generic.
