@@ -87,13 +87,15 @@ func TestTranscribeStagedRefreshesOn403(t *testing.T) {
 	}
 	var refresh int
 	var cmds []string
+	mxc, chat, authPath := authSandbox(t)
+	chat.Workspace = dir
 	b := &Bot{
-		cfg:    &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}, STT: config.STT{AuthPath: "/home/dev/.grok/auth.json"}},
+		cfg:    &config.Config{MXC: mxc, STT: config.STT{}},
 		stt:    &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
-		runner: fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds),
+		runner: fakeAuthRunner(t, authPath, "old-tok", "new-tok", &refresh, &cmds),
 		log:    slog.New(slog.DiscardHandler),
 	}
-	tr, err := b.transcribeStaged(context.Background(), config.Chat{Workspace: dir, JailbeeContainer: "main"}, media.StagedFile{
+	tr, err := b.transcribeStaged(context.Background(), chat, media.StagedFile{
 		AbsPath: abs,
 		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
 		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
@@ -126,13 +128,15 @@ func TestTranscribeStagedEnvKeySkipsRefresh(t *testing.T) {
 	}
 	var refresh int
 	var cmds []string
+	mxc, chat, authPath := authSandbox(t)
+	chat.Workspace = dir
 	b := &Bot{
-		cfg:    &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}, STT: config.STT{AuthPath: "/home/dev/.grok/auth.json"}},
+		cfg:    &config.Config{MXC: mxc},
 		stt:    &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
-		runner: fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds),
+		runner: fakeAuthRunner(t, authPath, "old-tok", "new-tok", &refresh, &cmds),
 		log:    slog.New(slog.DiscardHandler),
 	}
-	_, err := b.transcribeStaged(context.Background(), config.Chat{Workspace: dir, JailbeeContainer: "main"}, media.StagedFile{
+	_, err := b.transcribeStaged(context.Background(), chat, media.StagedFile{
 		AbsPath: abs,
 		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
 		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
@@ -162,13 +166,15 @@ func TestTranscribeStagedServerErrorSkipsRefresh(t *testing.T) {
 	}
 	var refresh int
 	var cmds []string
+	mxc, chat, authPath := authSandbox(t)
+	chat.Workspace = dir
 	b := &Bot{
-		cfg:    &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}, STT: config.STT{AuthPath: "/home/dev/.grok/auth.json"}},
+		cfg:    &config.Config{MXC: mxc},
 		stt:    &media.STT{BaseURL: srv.URL, HTTP: srv.Client()},
-		runner: fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds),
+		runner: fakeAuthRunner(t, authPath, "old-tok", "new-tok", &refresh, &cmds),
 		log:    slog.New(slog.DiscardHandler),
 	}
-	_, err := b.transcribeStaged(context.Background(), config.Chat{Workspace: dir, JailbeeContainer: "main"}, media.StagedFile{
+	_, err := b.transcribeStaged(context.Background(), chat, media.StagedFile{
 		AbsPath: abs,
 		RelPath: ".local/telegram-inbox/notes/77-voice.ogg",
 		Ref:     media.AttachmentRef{Kind: "voice", MIME: "audio/ogg"},
@@ -181,33 +187,62 @@ func TestTranscribeStagedServerErrorSkipsRefresh(t *testing.T) {
 	}
 }
 
-func fakeAuthRunner(t *testing.T, oldTok, newTok string, refresh *int, cmds *[]string) *runner.Runner {
+func authSandbox(t *testing.T) (config.MXC, config.Chat, string) {
 	t.Helper()
-	cats := 0
-	r := runner.New()
-	r.Resolve = func(_ context.Context, _ *config.Config, chat config.Chat) (string, error) {
-		return chat.JailbeeContainer, nil
+	root := t.TempDir()
+	install := filepath.Join(t.TempDir(), "install")
+	if err := os.MkdirAll(filepath.Join(install, "bin"), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	grok := filepath.Join(install, "bin", "grok")
+	if err := os.WriteFile(grok, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mxc := config.MXC{Binary: "lxc-exec", GrokBin: grok, StateDir: root}
+	chat := config.Chat{Name: "notes", Workspace: t.TempDir()}
+	path, err := (&config.Config{MXC: mxc}).AuthFile(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mxc, chat, path
+}
+
+func writeAuth(t *testing.T, path, tok string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"https://auth.x.ai::x":{"key":"` + tok + `","create_time":"2026-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fakeAuthRunner(t *testing.T, authPath, oldTok, newTok string, refresh *int, cmds *[]string) *runner.Runner {
+	t.Helper()
+	writeAuth(t, authPath, oldTok)
+	r := runner.New()
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		joined := strings.Join(args, " ")
 		*cmds = append(*cmds, joined)
-		switch {
-		case strings.Contains(joined, "grok models"):
-			*refresh++
-			return exec.CommandContext(ctx, "true")
-		case strings.Contains(joined, "cat --"):
-			cats++
-			tok := oldTok
-			if cats > 1 {
-				tok = newTok
+		var cfgPath string
+		for i, a := range args {
+			if a == "--config" && i+1 < len(args) {
+				cfgPath = args[i+1]
 			}
-			body := `{"https://auth.x.ai::x":{"key":"` + tok + `","create_time":"2026-01-01T00:00:00Z"}}`
-			return exec.CommandContext(ctx, "printf", "%s", body)
-		default:
-			t.Fatalf("unexpected jailbee args: %q", joined)
-			return exec.CommandContext(ctx, "false")
 		}
+		raw, err := os.ReadFile(cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "models") {
+			*refresh++
+			writeAuth(t, authPath, newTok)
+			return exec.CommandContext(ctx, "true")
+		}
+		t.Fatalf("unexpected mxc command: %s", raw)
+		return exec.CommandContext(ctx, "false")
 	}
 	return r
 }
@@ -958,15 +993,15 @@ func TestReplyGateRefreshesOn403(t *testing.T) {
 	var refresh int
 	var cmds []string
 	b := silentBot(t, nil)
-	b.cfg.Jailbee.Binary = "jailbee"
+	mxc, chat, authPath := authSandbox(t)
+	b.cfg.MXC = mxc
 	b.cfg.STT.BaseURL = srv.URL
-	b.cfg.STT.AuthPath = "/home/dev/.grok/auth.json"
 	b.cfg.Grok.GateModel = "grok-4.3"
 	b.cfg.Grok.GateTimeout = "15s"
 	b.cfg.Grok.GateReasoning = "none"
-	b.runner = fakeAuthRunner(t, "old-tok", "new-tok", &refresh, &cmds)
+	b.runner = fakeAuthRunner(t, authPath, "old-tok", "new-tok", &refresh, &cmds)
 	g := &replyGate{bot: b}
-	d, err := g.Decide(context.Background(), config.Chat{Name: "notes", Workspace: t.TempDir(), JailbeeContainer: "main"}, groupMsg("buy milk"), "buy milk")
+	d, err := g.Decide(context.Background(), chat, groupMsg("buy milk"), "buy milk")
 	if err != nil {
 		t.Fatal(err)
 	}

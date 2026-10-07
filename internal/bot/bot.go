@@ -125,12 +125,12 @@ func (b *Bot) resolveChats(ctx context.Context) error {
 		return nil
 	}
 	for _, ch := range b.cfg.Chats {
-		name, err := b.runner.ContainerName(ctx, b.cfg, ch)
+		home, err := b.runner.Prepare(ctx, b.cfg, ch)
 		if err != nil {
 			return fmt.Errorf("chat %s: %w", ch.Name, err)
 		}
 		if b.log != nil {
-			b.log.Info("jailbee container", "chat", ch.Name, "requested", ch.JailbeeContainer, "incus", name)
+			b.log.Info("mxc sandbox", "chat", ch.Name, "home", home)
 		}
 	}
 	return nil
@@ -765,16 +765,16 @@ func (t *liveTurn) Run() error {
 	}
 	sessionID, resume := b.sess.ID(chat.Name)
 	attrs = append(attrs, "session", sessionID, "resume", resume)
-	if name, err := b.runner.ContainerName(context.Background(), b.cfg, chat); err == nil && name != "" {
-		attrs = append(attrs, "incus", name)
+	if home, err := b.cfg.SandboxHome(chat); err == nil && home != "" {
+		attrs = append(attrs, "sandbox", home)
 	}
 	b.log.Info("grok turn", attrs...)
 
 	res, err := b.runner.Run(context.Background(), b.cfg, chat, t.req, sessionID, resume)
 	if err != nil {
 		failAttrs := []any{"chat", chat.Name, "err", redactToken(err.Error(), tg.Token), "duration", res.Duration}
-		if res.Container != "" {
-			failAttrs = append(failAttrs, "incus", res.Container)
+		if res.Sandbox != "" {
+			failAttrs = append(failAttrs, "sandbox", res.Sandbox)
 		}
 		b.log.Error("grok failed", failAttrs...)
 		_, sendErr := msg.Reply(tg, "Grok failed: "+redactToken(err.Error(), tg.Token), replyOpts(msg))
@@ -871,7 +871,7 @@ func (b *Bot) authToken(ctx context.Context, chat config.Chat) (string, error) {
 	if k := strings.TrimSpace(os.Getenv("XAI_API_KEY")); k != "" {
 		return k, nil
 	}
-	raw, err := b.runner.ReadContainerFile(ctx, b.cfg, chat, b.cfg.STT.AuthPath)
+	raw, err := b.runner.ReadAuthFile(ctx, b.cfg, chat)
 	if err != nil {
 		return "", err
 	}

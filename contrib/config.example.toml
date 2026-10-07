@@ -32,8 +32,11 @@ timeout = "10m"
 # Used when the gate errors. Default: the lowest listed level.
 # reasoning_default = "medium"
 
-[jailbee]
-binary = "jailbee"
+[mxc]
+# binary = "lxc-exec"
+# grok_bin = "/path/to/grok"  # empty: PATH. A shim that is not the grok binary is refused.
+# state_dir = ""                 # default: ~/.local/state/kerfline/sandboxes
+# readonly_paths = ["/usr/local"]
 
 [media]
 # Telegram photo/document staging. Defaults shown; all keys optional.
@@ -43,7 +46,8 @@ vision = "auto"       # auto | always | never
 inbox_ttl = "168h"
 
 [stt]
-# Voice/audio transcription via Grok STT. Token is XAI_API_KEY, else grok login in the jailbee container.
+# Voice/audio transcription via Grok STT. Token is XAI_API_KEY, else
+# <sandbox home>/.grok/auth.json from `kerfline login`.
 # base_url = "https://api.x.ai"
 # timeout = "2m"
-# auth_path = "/home/dev/.grok/auth.json"
+# auth_path = ""                 # empty: that chat's sandbox auth.json

@@ -1,8 +1,8 @@
 # Kerfline
 
 Kerfline is a Telegram bot that maps **each chat to one git workspace**. A
-message becomes a Grok turn inside a [JailBee](https://github.com/VRTFinland/jailbee)
-container for that workspace — not on the host. Grok files notes, answers
+message becomes a Grok turn inside a [Microsoft Execution Containers](https://github.com/microsoft/mxc)
+bubblewrap sandbox for that workspace — not on the host. Grok files notes, answers
 questions, and can send workspace files back as photos or documents.
 
 The name is *kerf* (the slit a blade leaves) plus *line* (the wire): one
@@ -11,8 +11,8 @@ narrow opening per chat.
 ## Status
 
 Working personal bot, used daily, MIT-licensed. It is not a one-command
-installer. First run is still several independent layers (Incus, JailBee’s
-golden image, a workspace repo, a Grok login, a bot token). `kerfline doctor`
+installer. First run is still a few independent layers (bubblewrap, the MXC
+executor, a workspace repo, a Grok login, a bot token). `kerfline doctor`
 and `kerfline init` are planned and **not implemented yet** — until they
 exist, this file is the setup path.
 
@@ -23,18 +23,17 @@ v1 is local git. Gitea `tea` keys exist on chat files but are unused.
 ```
 Telegram chat
     → Kerfline (this Go process, on the host)
-        → jailbee ls in that workspace → Incus full name
-        → jailbee exec <full name> -- grok …
-            → Grok inside an Incus container
+        → lxc-exec --config <one-shot bubblewrap policy>
+            → Grok inside an MXC sandbox
                 ↳ one git workspace per chat
 ```
 
 This repo is only the host bot. Workspace repos (notes, a project, …) are
-**separate git trees** with their own `.jailbee/` and `AGENTS.md`.
+**separate git trees** with their own `AGENTS.md`.
 
 What that split buys you:
 
-- Isolation: Grok’s tools run in the container, not on the host
+- Isolation: Grok’s tools run in the sandbox, not on the host
 - Persistence: the workspace is ordinary git you already know how to backup
 - Scope: one chat (or one forum topic) owns one repo
 - Media: photos and documents can be filed without sending pixels to Grok;
@@ -43,36 +42,26 @@ What that split buys you:
 
 ## Requirements
 
-- **Linux** host
-- **[Incus](https://linuxcontainers.org/incus/)**
-- **[JailBee](https://github.com/VRTFinland/jailbee)**
-- **Grok** inside the workspace container: SuperGrok device login, or `XAI_API_KEY`
+- **Linux** host with user namespaces and [Bubblewrap](https://github.com/containers/bubblewrap) 0.5.0+ (`bwrap`)
+- **`lxc-exec`** from [MXC](https://github.com/microsoft/mxc) 1.0.0 on `PATH` (the Linux executor; the npm package `@microsoft/mxc-sdk` ships it under `bin/x64/` or `bin/arm64/`)
+- **`slirp4netns`**, `iptables` (nft backend), and `nsenter`, so outbound network can be allowed without sharing the host network namespace
+- **Grok** on the host `PATH`: SuperGrok device login per chat, or `XAI_API_KEY`. Kerfline follows symlinks and mounts the resolved binary's directory read-only. A version-manager shim that points at another program is refused; set `mxc.grok_bin` to the grok executable.
 - **Go 1.24+** to build
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
-JailBee is a separate GPL-3.0-or-later runtime. Kerfline talks to it only as
-a child process (`jailbee exec … -- grok …`). This tree does not include it.
+MXC is a separate MIT runtime. Kerfline talks to it only as a child process
+(`lxc-exec --config …`). This tree does not include it.
 
 ## First run
 
-Six jobs. If something fails, name the layer — an Incus or login problem
+Five jobs. If something fails, name the layer — a sandbox or login problem
 will not look like a Telegram bug.
 
-### 1. Incus and JailBee
+### 1. Bubblewrap and MXC
 
-Install the CLI, then follow JailBee’s host guide (Incus, UID mapping,
-firewall):
-
-```bash
-uv tool install jailbee      # or: pipx install jailbee
-```
-
-**[JailBee installation](https://github.com/VRTFinland/jailbee/blob/main/docs/installation.md)**
-end to end, then `jailbee setup` and `jailbee doctor`. Per-repo image and
-container steps come after, in the workspace below — not in this repo.
-
-On Arch, `scripts/host-setup-incus.sh` is an optional sudo helper for Incus
-packages and subuid lines. It is not the install path for other distros.
+Install bubblewrap from the distro, plus `slirp4netns` and `iptables`. Copy
+the matching `lxc-exec` from `@microsoft/mxc-sdk@1.0.0` (`bin/x64/lxc-exec`
+or `bin/arm64/lxc-exec`) onto `PATH`, for example `~/.local/bin/lxc-exec`.
 
 ### 2. Build Kerfline
 
@@ -82,49 +71,29 @@ make build          # go build -o kerfline ./cmd/kerfline
 
 ### 3. A workspace repo
 
-Not this tree. Pick a directory, make it a git repo, and give it JailBee +
-Grok:
+Not this tree. Pick a directory and make it a git repo:
 
 ```bash
 mkdir -p ~/kerfline-workspaces/notes
 cd ~/kerfline-workspaces/notes
 git init
 echo .local/ >> .gitignore    # Telegram inbox; must stay untracked
-jailbee config init
 ```
-
-Enable Grok in `.jailbee/config.yaml`. Kerfline runs `grok` itself; you do
-not need `autostart`:
-
-```yaml
-agents:
-  grok:
-    enabled: true
-```
-
-Then:
-
-```bash
-jailbee init
-jailbee base build          # ~10–15 min, once per host
-jailbee new main
-```
-
-See JailBee’s **[Getting started](https://github.com/VRTFinland/jailbee/blob/main/docs/getting-started.md)**
-if `doctor` or `new` complains.
 
 ### 4. Log Grok in
 
-Device auth needs open egress for a few minutes:
+Each chat gets its own sandbox home under
+`~/.local/state/kerfline/sandboxes/<chat>/home`. The host `~/.grok` login
+is not visible there. After the chat file from the next step exists:
 
 ```bash
-jailbee net loose main --for 15m
-jailbee exec main -- grok login --device-auth
-jailbee exec main -- grok -p "reply pong" --always-approve
+kerfline login notes
 ```
 
-Or set `XAI_API_KEY` in the container instead of SuperGrok login. STT uses
-the same login (or that env var).
+That runs `grok login --device-auth` inside the sandbox. Or set
+`XAI_API_KEY` in the environment instead of a SuperGrok login. STT uses
+the same login (or that env var). Do not copy one `auth.json` onto another
+chat: a shared refresh token invalidates both copies.
 
 ### 5. Bot config (long-poll)
 
@@ -143,10 +112,6 @@ echo 'BOT_TOKEN=…' >> ~/.config/kerfline/env
 Edit `chats/notes.toml`:
 
 - `workspace` — **absolute** path of the repo from step 3
-- `jailbee_container = "main"` — the **short** name from `jailbee ls` in
-  that workspace. Kerfline looks up the Incus full name from that listing
-  (`notes-main`, not a foreign container that happens to be called `main`)
-  and refuses to start if the name is not in this workspace.
 - `require_mention = false` for a private DM (`true` in groups unless you
   want every line gated; see below)
 - `telegram_chat_id = 0` until the next step
@@ -238,7 +203,7 @@ a clip at or under `gate_speech_max` (default two minutes) is transcribed and
 sent through the reply gate even with no caption; if the gate says reply,
 that same transcript is reused for the Grok turn (no second STT). Longer
 bare clips are still ignored. Kerfline downloads the OGG, transcribes it with
-Grok STT (SuperGrok login inside the container, or `XAI_API_KEY`), and puts
+Grok STT (SuperGrok login in that chat's sandbox, or `XAI_API_KEY`), and puts
 the transcript in the Grok prompt. Grok does not listen to the file.
 
 Grok can send a workspace file back in the reply with a Markdown image whose
@@ -258,8 +223,8 @@ split above. Per-chat `vision = "never"` skips look-only turns;
 
 ## Adding a chat
 
-New workspace repo with `.jailbee/`, `jailbee new`, then a new
-`chats/foo.toml`. Same binary.
+New workspace repo, then a new `chats/foo.toml`. Same binary. Run
+`kerfline login foo` before the first turn that needs a Grok token.
 
 To bind only one forum topic, set `telegram_topic_id` to the id from
 `/chatid` in that topic. Other topics in the group are ignored unless another
@@ -293,12 +258,13 @@ systemctl --user enable --now kerfline
 ## Later: Gitea / tea
 
 Do **not** mount `~/.config/tea`. Create a Gitea user that can only see that
-one repo, `tea login` inside the container, add `gitea.example.com:443` to
-JailBee strict egress, fill `gitea_remote` / `tea_login` on the chat file.
+one repo, `tea login` inside that chat's sandbox home, and fill
+`gitea_remote` / `tea_login` on the chat file. Outbound network from the
+sandbox is allowed, except to this machine's loopback.
 
 ## License
 
 Kerfline is MIT. See [`LICENSE`](LICENSE).
 
-[JailBee](https://github.com/VRTFinland/jailbee) is a separate GPL-3.0-or-later
-runtime; this repo does not include it.
+[MXC](https://github.com/microsoft/mxc) is a separate MIT runtime; this repo
+does not include it.

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,9 @@ func main() {
 }
 
 func run(log *slog.Logger) error {
+	if len(os.Args) > 1 && os.Args[1] == "login" {
+		return runLogin(log, os.Args[2:])
+	}
 	configDir := flag.String("config-dir", config.DefaultDir(), "config directory (config.toml + chats/)")
 	flag.Parse()
 
@@ -64,6 +68,41 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	return bot.New(cfg, log, runner.New(), store).Run(ctx, tg)
+}
+
+func runLogin(log *slog.Logger, args []string) error {
+	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	configDir := fs.String("config-dir", config.DefaultDir(), "config directory (config.toml + chats/)")
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: kerfline login <chat>")
+	}
+	loadDotEnv(*configDir)
+	cfg, err := config.Load(*configDir)
+	if err != nil {
+		return err
+	}
+	name := fs.Arg(0)
+	var chat config.Chat
+	var found bool
+	var names []string
+	for _, ch := range cfg.Chats {
+		names = append(names, ch.Name)
+		if ch.Name == name {
+			chat = ch
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("no chat %q (have %s)", name, strings.Join(names, ", "))
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	log.Info("grok login", "chat", chat.Name)
+	return runner.New().Login(ctx, cfg, chat)
 }
 
 func loadDotEnv(dir string) {

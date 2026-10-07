@@ -2,121 +2,243 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/timbze/kerfline/internal/config"
 )
 
-func identityResolve(_ context.Context, _ *config.Config, chat config.Chat) (string, error) {
-	return chat.JailbeeContainer, nil
-}
-
-func TestRunBuildsJailbeeExec(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotName string
-	var gotArgs []string
-	var gotCmd *exec.Cmd
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotName, gotArgs = name, args
-		gotCmd = exec.CommandContext(ctx, "true")
-		return gotCmd
+func testRig(t *testing.T) (*Runner, *config.Config, config.Chat, string) {
+	t.Helper()
+	root := t.TempDir()
+	install := t.TempDir()
+	binDir := filepath.Join(install, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grok := filepath.Join(binDir, "grok")
+	if err := os.WriteFile(grok, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(install, "bundled"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	cfg := &config.Config{
-		Grok: config.Grok{
-			AlwaysApprove:   true,
-			DisallowedTools: []string{"web_fetch"},
-			Timeout:         "1m",
+		MXC: config.MXC{
+			Binary:   "lxc-exec",
+			GrokBin:  grok,
+			StateDir: root,
 		},
-		Jailbee: config.Jailbee{Binary: "jailbee"},
 	}
-	ws := t.TempDir()
-	chat := config.Chat{
-		Workspace:        ws,
-		JailbeeContainer: "main",
+	chat := config.Chat{Name: "notes", Workspace: t.TempDir()}
+	r := New()
+	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	return r, cfg, chat, install
+}
+
+func captureReq(t *testing.T, r *Runner) *mxcRequest {
+	t.Helper()
+	got := &mxcRequest{}
+	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name != "/usr/bin/lxc-exec" {
+			t.Fatalf("bin %s", name)
+		}
+		raw, err := os.ReadFile(configPath(t, args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, got); err != nil {
+			t.Fatal(err)
+		}
+		return exec.CommandContext(ctx, "true")
+	}
+	return got
+}
+
+func configPath(t *testing.T, args []string) string {
+	t.Helper()
+	for i, a := range args {
+		if a == "--config" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("no --config in %q", strings.Join(args, " "))
+	return ""
+}
+
+func TestRunBuildsMXCRequest(t *testing.T) {
+	r, cfg, chat, install := testRig(t)
+	cfg.Grok = config.Grok{
+		AlwaysApprove:   true,
+		DisallowedTools: []string{"web_fetch"},
+		Timeout:         "1m",
 	}
 	cfg.Rules = "Keep it short."
+	got := captureReq(t, r)
 	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "11111111-1111-1111-1111-111111111111", true); err != nil {
 		t.Fatal(err)
 	}
-	if gotName != "/usr/bin/jailbee" {
-		t.Fatalf("bin %s", gotName)
-	}
-	if gotCmd.Dir != ws {
-		t.Fatalf("dir %s", gotCmd.Dir)
-	}
-	joined := strings.Join(gotArgs, " ")
+	line := got.Process.CommandLine
 	for _, want := range []string{
-		"exec -c " + ws + "/.jailbee/config.yaml main --",
-		"grok -p ping",
+		filepath.Join(install, "bin", "grok"),
+		"-p",
+		"ping",
 		"--always-approve",
-		"--disallowed-tools web_fetch",
-		"-r 11111111-1111-1111-1111-111111111111",
-		"--output-format streaming-json",
-		"--rules Keep it short.",
+		"--disallowed-tools",
+		"web_fetch",
+		"-r",
+		"11111111-1111-1111-1111-111111111111",
+		"--output-format",
+		"streaming-json",
+		"--rules",
+		"Keep it short.",
 	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("args %q missing %q", joined, want)
+		if !strings.Contains(line, want) {
+			t.Fatalf("command %q missing %q", line, want)
+		}
+	}
+	if got.Version != "1.0.0" || got.Containment != "bubblewrap" {
+		t.Fatalf("request %+v", got)
+	}
+	if got.Process.Cwd != chat.Workspace {
+		t.Fatalf("cwd %s", got.Process.Cwd)
+	}
+	home, err := cfg.SandboxHome(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsAll(got.Filesystem.ReadwritePaths, chat.Workspace, home) {
+		t.Fatalf("readwrite %v", got.Filesystem.ReadwritePaths)
+	}
+	if !containsAll(got.Filesystem.ReadonlyPaths, filepath.Join(install, "bin"), filepath.Join(install, "bundled")) {
+		t.Fatalf("readonly %v", got.Filesystem.ReadonlyPaths)
+	}
+	if got.Network.Egress.Default != "allow" || got.Network.Ingress.Default != "deny" || got.Network.Ingress.HostLoopback != "deny" {
+		t.Fatalf("network %+v", got.Network)
+	}
+	joinedEnv := strings.Join(got.Process.Env, "\n")
+	if !strings.Contains(joinedEnv, "HOME="+home) {
+		t.Fatalf("env %s", joinedEnv)
+	}
+	if strings.Contains(joinedEnv, "XDG_CONFIG_HOME") || strings.Contains(joinedEnv, "XDG_RUNTIME_DIR") {
+		t.Fatalf("env leaks host dirs: %s", joinedEnv)
+	}
+}
+
+func TestPolicyHidesHostGrokAndOtherChats(t *testing.T) {
+	r, cfg, chat, _ := testRig(t)
+	other := filepath.Join(cfg.MXC.StateDir, "hd", "home")
+	hostGrok := filepath.Join(t.TempDir(), ".grok")
+	cfg.MXC.ReadonlyPaths = []string{hostGrok}
+	if err := os.MkdirAll(hostGrok, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostGrok, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := captureReq(t, r)
+	_, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
+	if err == nil || !strings.Contains(err.Error(), "auth.json") {
+		t.Fatalf("err %v", err)
+	}
+	cfg.MXC.ReadonlyPaths = nil
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	blob := strings.Join(append(got.Filesystem.ReadwritePaths, got.Filesystem.ReadonlyPaths...), "\n")
+	for _, hidden := range []string{hostGrok, other, filepath.Join(t.TempDir(), ".config", "kerfline")} {
+		if strings.Contains(blob, hidden) {
+			t.Fatalf("policy exposes %s: %s", hidden, blob)
 		}
 	}
 }
 
-func TestRunOmitsRulesWhenEmpty(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotArgs []string
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotArgs = args
-		return exec.CommandContext(ctx, "true")
+func TestGrokBinaryResolvesSymlinkAndRejectsShim(t *testing.T) {
+	r, cfg, chat, install := testRig(t)
+	binDir := filepath.Join(install, "bin")
+	real := filepath.Join(binDir, "grok-1.0.46")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	link := filepath.Join(binDir, "grok")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("grok-1.0.46", link); err != nil {
+		t.Fatal(err)
+	}
+	cfg.MXC.GrokBin = link
+	got := captureReq(t, r)
 	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false); err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(gotArgs, " ")
-	if strings.Contains(joined, "--rules") {
-		t.Fatalf("unexpected --rules in %q", joined)
+	if !strings.Contains(got.Process.CommandLine, real) {
+		t.Fatalf("command %q", got.Process.CommandLine)
 	}
-	if strings.Contains(joined, "--reasoning-effort") {
-		t.Fatalf("unexpected --reasoning-effort in %q", joined)
+	if !containsAll(got.Filesystem.ReadonlyPaths, binDir) {
+		t.Fatalf("readonly %v", got.Filesystem.ReadonlyPaths)
+	}
+
+	shimDir := t.TempDir()
+	mise := filepath.Join(shimDir, "mise")
+	if err := os.WriteFile(mise, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(shimDir, "grok")
+	if err := os.Symlink(mise, shim); err != nil {
+		t.Fatal(err)
+	}
+	cfg.MXC.GrokBin = shim
+	_, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
+	if err == nil || !strings.Contains(err.Error(), "not a grok binary") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestGrokBinDirWithAuthIsRefused(t *testing.T) {
+	r, cfg, chat, install := testRig(t)
+	if err := os.WriteFile(filepath.Join(install, "bin", "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
+	if err == nil || !strings.Contains(err.Error(), "auth.json") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestRunOmitsRulesWhenEmpty(t *testing.T) {
+	r, cfg, chat, _ := testRig(t)
+	got := captureReq(t, r)
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.Process.CommandLine, "--rules") {
+		t.Fatalf("unexpected --rules in %q", got.Process.CommandLine)
+	}
+	if strings.Contains(got.Process.CommandLine, "--reasoning-effort") {
+		t.Fatalf("unexpected --reasoning-effort in %q", got.Process.CommandLine)
 	}
 }
 
 func TestRunEffortFlag(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotArgs []string
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotArgs = args
-		return exec.CommandContext(ctx, "true")
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	r, cfg, chat, _ := testRig(t)
+	got := captureReq(t, r)
 	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping", Effort: "high"}, "", false); err != nil {
 		t.Fatal(err)
 	}
-	if !containsSeq(gotArgs, []string{"--reasoning-effort", "high"}) {
-		t.Fatalf("effort flag missing: %q", strings.Join(gotArgs, " "))
+	line := got.Process.CommandLine
+	if !strings.Contains(line, "--reasoning-effort") || !strings.Contains(line, "high") {
+		t.Fatalf("effort flag missing: %q", line)
 	}
 }
 
 func TestRunDenyFlags(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotArgs []string
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotArgs = args
-		return exec.CommandContext(ctx, "true")
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	r, cfg, chat, _ := testRig(t)
+	got := captureReq(t, r)
 	req := Request{
 		Prompt: "save this",
 		Deny:   []string{"Read(.local/telegram-inbox/**)", "Grep(.local/telegram-inbox/**)"},
@@ -124,55 +246,44 @@ func TestRunDenyFlags(t *testing.T) {
 	if _, err := r.Run(context.Background(), cfg, chat, req, "", false); err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(gotArgs, " ")
-	if !strings.Contains(joined, "grok -p save this") {
-		t.Fatalf("missing -p: %q", joined)
+	line := got.Process.CommandLine
+	if !strings.Contains(line, "-p") || !strings.Contains(line, "save this") {
+		t.Fatalf("missing -p: %q", line)
 	}
-	if strings.Contains(joined, "--prompt-file") {
-		t.Fatalf("unexpected prompt-file: %q", joined)
+	if strings.Contains(line, "--prompt-file") {
+		t.Fatalf("unexpected prompt-file: %q", line)
 	}
-	want := []string{"--deny", "Read(.local/telegram-inbox/**)", "--deny", "Grep(.local/telegram-inbox/**)"}
-	if !containsSeq(gotArgs, want) {
-		t.Fatalf("deny not separate argv entries: %q", joined)
+	for _, want := range []string{"--deny", "Read(.local/telegram-inbox/**)", "Grep(.local/telegram-inbox/**)"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("deny missing %q in %q", want, line)
+		}
 	}
 }
 
 func TestRunPromptFileXorPrompt(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotArgs []string
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotArgs = args
-		return exec.CommandContext(ctx, "true")
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	r, cfg, chat, _ := testRig(t)
 	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "x", PromptFile: "turn.json"}, "", false); err == nil {
 		t.Fatal("expected exclusive error")
 	}
+	got := captureReq(t, r)
 	if _, err := r.Run(context.Background(), cfg, chat, Request{PromptFile: ".local/turn.json"}, "", false); err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(gotArgs, " ")
-	if !strings.Contains(joined, "--prompt-file .local/turn.json") {
-		t.Fatalf("args %q", joined)
+	line := got.Process.CommandLine
+	if !strings.Contains(line, "--prompt-file") || !strings.Contains(line, ".local/turn.json") {
+		t.Fatalf("args %q", line)
 	}
-	if strings.Contains(joined, "grok -p ") {
-		t.Fatalf("must not pass -p with prompt-file: %q", joined)
+	if strings.Contains(line, "'-p'") {
+		t.Fatalf("must not pass -p with prompt-file: %q", line)
 	}
 }
 
 func TestRunLastTurnFromStream(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	r, cfg, chat, _ := testRig(t)
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		script := `printf '%s\n' '{"type":"text","data":"I will look through the codebase."}' '{"type":"tool_call","toolCallId":"1"}' '{"type":"text","data":"Not a new alarm type."}' '{"type":"end","stopReason":"end_turn"}'`
 		return exec.CommandContext(ctx, "sh", "-c", script)
 	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
 	res, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "when was idle added"}, "", false)
 	if err != nil {
 		t.Fatal(err)
@@ -180,197 +291,72 @@ func TestRunLastTurnFromStream(t *testing.T) {
 	if res.Stdout != "Not a new alarm type." {
 		t.Fatalf("stdout %q", res.Stdout)
 	}
-}
-
-func TestReadContainerFile(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotArgs []string
-	body := `{"https://auth.x.ai::x":{"key":"tok-1"}}`
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotArgs = args
-		return exec.CommandContext(ctx, "printf", "%s", body)
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
-	got, err := r.ReadContainerFile(context.Background(), cfg, chat, "/home/dev/.grok/auth.json")
+	home, err := cfg.SandboxHome(chat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != body {
+	if res.Sandbox != home {
+		t.Fatalf("sandbox %q", res.Sandbox)
+	}
+}
+
+func TestReadAuthFile(t *testing.T) {
+	r, cfg, chat, _ := testRig(t)
+	path, err := cfg.AuthFile(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"https://auth.x.ai::x":{"key":"tok-1"}}`)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.ReadAuthFile(context.Background(), cfg, chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(body) {
 		t.Fatalf("stdout %q", got)
 	}
-	joined := strings.Join(gotArgs, " ")
-	for _, want := range []string{
-		"exec -c " + chat.JailbeeConfig() + " main --",
-		"cat -- /home/dev/.grok/auth.json",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("args %q missing %q", joined, want)
-		}
+	cfg.STT.AuthPath = filepath.Join(t.TempDir(), "auth.json")
+	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
+		t.Fatal("path outside the sandbox home should fail")
 	}
-	if _, err := r.ReadContainerFile(context.Background(), cfg, chat, "relative"); err == nil {
+	cfg.STT.AuthPath = "relative"
+	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
 		t.Fatal("relative path should fail")
 	}
 }
 
 func TestRefreshGrokAuthRunsModels(t *testing.T) {
-	r := New()
-	r.Resolve = identityResolve
-	var gotArgs []string
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotArgs = args
-		return exec.CommandContext(ctx, "true")
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
+	r, cfg, chat, install := testRig(t)
+	got := captureReq(t, r)
 	if err := r.RefreshGrokAuth(context.Background(), cfg, chat); err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(gotArgs, " ")
-	for _, want := range []string{
-		"exec -c " + chat.JailbeeConfig() + " main --",
-		"grok models",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("args %q missing %q", joined, want)
-		}
+	line := got.Process.CommandLine
+	if !strings.Contains(line, filepath.Join(install, "bin", "grok")) || !strings.Contains(line, "models") {
+		t.Fatalf("command %q", line)
 	}
-	if strings.Contains(joined, "cat --") || strings.Contains(joined, "-p ") {
-		t.Fatalf("refresh must not cat or prompt: %q", joined)
+	if strings.Contains(line, "cat") || strings.Contains(line, "-p") {
+		t.Fatalf("refresh must not cat or prompt: %q", line)
 	}
 }
 
-func TestPickContainerPrefersWorkspaceFullName(t *testing.T) {
-	rows := []containerRow{
-		{Name: "main", FullName: "gbcmensl-main", State: "Running"},
-	}
-	got, err := pickContainer("main", rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "gbcmensl-main" {
-		t.Fatalf("got %q", got)
-	}
-	got, err = pickContainer("gbcmensl-main", rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "gbcmensl-main" {
-		t.Fatalf("full name %q", got)
-	}
-}
-
-func TestPickContainerMissing(t *testing.T) {
-	_, err := pickContainer("main", []containerRow{{Name: "feat", FullName: "notes-feat"}})
-	if err == nil || !strings.Contains(err.Error(), `jailbee container "main" is not in this workspace`) {
-		t.Fatalf("err %v", err)
-	}
-}
-
-func TestPickContainerAmbiguous(t *testing.T) {
-	_, err := pickContainer("main", []containerRow{
-		{Name: "main", FullName: "notes-main"},
-		{Name: "main", FullName: "other-main"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("err %v", err)
-	}
-}
-
-func TestRunExecsListingFullNameNotShortName(t *testing.T) {
-	r := New()
-	var execs [][]string
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		execs = append(execs, append([]string{name}, args...))
-		joined := strings.Join(args, " ")
-		if strings.HasPrefix(joined, "ls ") {
-			return exec.CommandContext(ctx, "printf", "%s", `[{"name":"main","full_name":"gbcmensl-main","state":"Running"}]`)
-		}
-		return exec.CommandContext(ctx, "true")
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
-	res, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Container != "gbcmensl-main" {
-		t.Fatalf("container %q", res.Container)
-	}
-	if len(execs) != 2 {
-		t.Fatalf("calls %d: %v", len(execs), execs)
-	}
-	ls := strings.Join(execs[0], " ")
-	if !strings.Contains(ls, "ls -c "+chat.JailbeeConfig()) || !strings.Contains(ls, "-o json") {
-		t.Fatalf("ls args %q", ls)
-	}
-	run := strings.Join(execs[1], " ")
-	if !strings.Contains(run, "exec -c "+chat.JailbeeConfig()+" gbcmensl-main --") {
-		t.Fatalf("exec must use listing full_name, got %q", run)
-	}
-	if strings.Contains(run, "exec -c "+chat.JailbeeConfig()+" main --") {
-		t.Fatalf("must not exec short name: %q", run)
-	}
-}
-
-func TestRunCachesResolvedName(t *testing.T) {
-	r := New()
-	var ls int
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		joined := strings.Join(args, " ")
-		if strings.HasPrefix(joined, "ls ") {
-			ls++
-			return exec.CommandContext(ctx, "printf", "%s", `[{"name":"main","full_name":"notes-main","state":"Running"}]`)
-		}
-		return exec.CommandContext(ctx, "true")
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
-	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "a"}, "", false); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RefreshGrokAuth(context.Background(), cfg, chat); err != nil {
-		t.Fatal(err)
-	}
-	if ls != 1 {
-		t.Fatalf("ls ran %d times, want 1", ls)
-	}
-}
-
-func TestResolveFromListMissingErrors(t *testing.T) {
-	r := New()
-	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
-	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "printf", "%s", `[{"name":"feat","full_name":"notes-feat","state":"Running"}]`)
-	}
-	cfg := &config.Config{Jailbee: config.Jailbee{Binary: "jailbee"}}
-	chat := config.Chat{Workspace: t.TempDir(), JailbeeContainer: "main"}
-	_, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
-	if err == nil || !strings.Contains(err.Error(), `jailbee container "main" is not in this workspace`) {
-		t.Fatalf("err %v", err)
-	}
-}
-
-func containsSeq(args, want []string) bool {
-	if len(want) == 0 || len(args) < len(want) {
-		return false
-	}
-	for i := 0; i+len(want) <= len(args); i++ {
-		ok := true
-		for j := range want {
-			if args[i+j] != want[j] {
-				ok = false
+func containsAll(got []string, want ...string) bool {
+	for _, w := range want {
+		ok := false
+		for _, g := range got {
+			if g == w {
+				ok = true
 				break
 			}
 		}
-		if ok {
-			return true
+		if !ok {
+			return false
 		}
 	}
-	return false
+	return true
 }
