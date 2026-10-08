@@ -226,15 +226,22 @@ func fakeAuthRunner(t *testing.T, authPath, oldTok, newTok string, refresh *int,
 	r.Command = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		joined := strings.Join(args, " ")
 		*cmds = append(*cmds, joined)
-		var cfgPath string
+		var raw []byte
+		var readErr error
 		for i, a := range args {
 			if a == "--config" && i+1 < len(args) {
-				cfgPath = args[i+1]
+				a = args[i+1]
+			}
+			if !strings.HasSuffix(a, ".json") {
+				continue
+			}
+			raw, readErr = os.ReadFile(a)
+			if readErr == nil {
+				break
 			}
 		}
-		raw, err := os.ReadFile(cfgPath)
-		if err != nil {
-			t.Fatal(err)
+		if readErr != nil || raw == nil {
+			t.Fatalf("mxc config: %v args=%q", readErr, args)
 		}
 		if strings.Contains(string(raw), "models") {
 			*refresh++
