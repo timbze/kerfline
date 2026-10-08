@@ -53,7 +53,7 @@ func TestExtractPhotoAndReply(t *testing.T) {
 	if ref == nil || ref.FileID != "big" || ref.MIME != "image/jpeg" || ref.Width != 1280 {
 		t.Fatalf("photo: %+v", ref)
 	}
-	reply := &gotgbot.Message{Text: "/ask save this", ReplyToMessage: photo}
+	reply := &gotgbot.Message{Text: "/kerf save this", ReplyToMessage: photo}
 	got := Extract(reply)
 	if got == nil || got.Source != "reply_to" || got.FileID != "big" {
 		t.Fatalf("reply: %+v", got)
@@ -101,7 +101,7 @@ func TestExtractVoiceAndReply(t *testing.T) {
 	if !IsSpeech(*ref) {
 		t.Fatal("voice should be speech")
 	}
-	reply := &gotgbot.Message{Text: "/ask transcribe this", ReplyToMessage: voice}
+	reply := &gotgbot.Message{Text: "/kerf transcribe this", ReplyToMessage: voice}
 	got := Extract(reply)
 	if got == nil || got.Source != "reply_to" || got.Kind != "voice" || got.FileID != "voice-file" {
 		t.Fatalf("reply: %+v", got)

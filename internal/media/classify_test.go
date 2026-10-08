@@ -25,7 +25,7 @@ func TestClassify(t *testing.T) {
 		{"archive this pdf", ClassSave},
 		{"extract the date from this", ClassLook},
 		{"this is an x-ray of a tooth for this person and I want it saved in their medical records", ClassSave},
-		{"/ask", ClassSave},
+		{"/kerf", ClassSave},
 		{"what folder should I put this in?", ClassSave},
 		{"what's the right path for this?", ClassSave},
 		{"I already read the discharge papers; file this", ClassSave},

@@ -19,7 +19,7 @@ Runtime config is `~/.config/kerfline/` (not in git): `config.toml`, `chats/*.to
 | Path | Role |
 |---|---|
 | `cmd/kerfline` | Host process |
-| `internal/bot` | Telegram handlers, `/ask` / mention triggers |
+| `internal/bot` | Telegram handlers, `/kerf` / mention triggers |
 | `internal/config` | TOML load; embeds default Grok rules |
 | `internal/runner` | `jailbee exec … -- grok` |
 | `internal/media` | Stage inbound Telegram files; upload outbound Markdown images |

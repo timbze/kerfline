@@ -8,6 +8,9 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
+// kerfCommand is the slash command that addresses the bot (/kerf …).
+const kerfCommand = "kerf"
+
 // PromptFromMessage extracts the Grok prompt from a Telegram message.
 // ok is false when this message should be ignored (ordinary group chatter).
 func PromptFromMessage(text, botUsername string, requireMention bool) (prompt string, ok bool) {
@@ -17,7 +20,7 @@ func PromptFromMessage(text, botUsername string, requireMention bool) (prompt st
 	}
 
 	if cmd, rest, isCmd := splitCommand(text); isCmd {
-		if cmd == "ask" {
+		if cmd == kerfCommand {
 			rest = strings.TrimSpace(rest)
 			if rest == "" {
 				return "", false
@@ -66,16 +69,16 @@ func BuildGrokPrompt(msg *gotgbot.Message, botUsername string, requireMention bo
 	return quoted + "\n\nUser:\n" + userText, true
 }
 
-// ExplicitlyAddressed reports whether text is a /ask (or /ask@bot) with a
+// ExplicitlyAddressed reports whether text is a /kerf (or /kerf@bot) with a
 // non-empty prompt, or contains @botUsername with other text remaining.
-// Empty /ask and bare @bot are false (see addressedWithoutPrompt).
+// Empty /kerf and bare @bot are false (see addressedWithoutPrompt).
 func ExplicitlyAddressed(text, botUsername string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false
 	}
 	if cmd, rest, isCmd := splitCommand(text); isCmd {
-		return cmd == "ask" && strings.TrimSpace(rest) != ""
+		return cmd == kerfCommand && strings.TrimSpace(rest) != ""
 	}
 	if botUsername == "" {
 		return false
@@ -91,7 +94,7 @@ func addressedWithoutPrompt(text, botUsername string) bool {
 		return false
 	}
 	if cmd, rest, isCmd := splitCommand(text); isCmd {
-		return cmd == "ask" && strings.TrimSpace(rest) == ""
+		return cmd == kerfCommand && strings.TrimSpace(rest) == ""
 	}
 	if botUsername == "" {
 		return false
