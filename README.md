@@ -84,10 +84,11 @@ echo .local/ >> .gitignore    # Telegram inbox; must stay untracked
 
 Each chat gets its own sandbox home under
 `~/.local/state/kerfline/sandboxes/<chat>/home`. The host `~/.grok` login
-is not visible there. After the chat file from the next step exists:
+is not visible there. After the chat file from the next step exists, go
+back to the Kerfline checkout and run:
 
 ```bash
-kerfline login notes
+./kerfline login notes
 ```
 
 That runs `grok login --device-auth` inside the sandbox. Or set
