@@ -166,9 +166,10 @@ where) — a different file, in the other repo.
 Start the bot in Telegram, DM `/chatid`, paste that id into
 `telegram_chat_id`, restart. Then `/kerf ping` — or just talk, in a DM.
 
-On startup the bot registers `/kerf` and `/chatid` with Telegram, so they show
-up in the `/` command menu. Tapping a command there sends it at once; to add
-text after `/kerf`, press Tab on desktop or long-press it on mobile.
+On startup the bot registers `/kerf` with Telegram, so it shows up in the `/`
+command menu (`/chatid` still works but stays off the menu). Tapping it there
+sends it at once; to add text after it, press Tab on desktop or long-press it
+on mobile.
 
 In a group, add the bot, `/chatid`, and keep `require_mention = true` unless
 you want the reply gate on every line. In a forum group, `/kerf` replies stay
