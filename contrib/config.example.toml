@@ -36,7 +36,7 @@ timeout = "10m"
 # binary = "lxc-exec"
 # grok_bin = "/path/to/grok"  # empty: PATH. A shim that is not the grok binary is refused.
 # state_dir = ""                 # default: ~/.local/state/kerfline/sandboxes
-# readonly_paths = ["/usr/local"]
+# readonly_paths = ["/usr/local"]  # may not hold state_dir or ~/.grok
 
 [media]
 # Telegram photo/document staging. Defaults shown; all keys optional.

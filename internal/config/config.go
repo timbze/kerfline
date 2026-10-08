@@ -552,17 +552,26 @@ func DefaultSandboxRoot() string {
 	return filepath.Join(home, ".local", "state", "kerfline", "sandboxes")
 }
 
-// SandboxHome is the HOME directory MXC gives this chat.
-func (c *Config) SandboxHome(ch Chat) (string, error) {
-	if err := safeChatName(ch.Name); err != nil {
-		return "", err
-	}
+// SandboxRoot is the directory that holds every chat's sandbox.
+func (c *Config) SandboxRoot() (string, error) {
 	root := c.MXC.StateDir
 	if root == "" {
 		root = DefaultSandboxRoot()
 	}
 	if root == "" || !filepath.IsAbs(root) {
 		return "", fmt.Errorf("mxc state dir is not an absolute path")
+	}
+	return filepath.Clean(root), nil
+}
+
+// SandboxHome is the HOME directory MXC gives this chat.
+func (c *Config) SandboxHome(ch Chat) (string, error) {
+	if err := safeChatName(ch.Name); err != nil {
+		return "", err
+	}
+	root, err := c.SandboxRoot()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(root, ch.Name, "home"), nil
 }

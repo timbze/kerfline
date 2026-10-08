@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/timbze/kerfline/internal/config"
@@ -159,6 +160,42 @@ func TestPolicyHidesHostGrokAndOtherChats(t *testing.T) {
 		if strings.Contains(blob, hidden) {
 			t.Fatalf("policy exposes %s: %s", hidden, blob)
 		}
+	}
+}
+
+func TestReadonlyPathsRejectStateDirAndHostGrok(t *testing.T) {
+	r, cfg, chat, _ := testRig(t)
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	if err := os.MkdirAll(filepath.Join(hostHome, ".grok"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(cfg.MXC.StateDir, "hd", "home")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "sandboxes")
+	if err := os.Symlink(cfg.MXC.StateDir, link); err != nil {
+		t.Fatal(err)
+	}
+	captureReq(t, r)
+	for _, tc := range []struct{ path, want string }{
+		{filepath.Dir(cfg.MXC.StateDir), "state dir"},
+		{cfg.MXC.StateDir, "state dir"},
+		{other, "state dir"},
+		{link, "state dir"},
+		{hostHome, ".grok"},
+		{filepath.Join(hostHome, ".grok"), ".grok"},
+	} {
+		cfg.MXC.ReadonlyPaths = []string{tc.path}
+		_, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err %v", tc.path, err)
+		}
+	}
+	cfg.MXC.ReadonlyPaths = []string{t.TempDir()}
+	if _, err := r.Run(context.Background(), cfg, chat, Request{Prompt: "ping"}, "", false); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -332,6 +369,55 @@ func TestReadAuthFile(t *testing.T) {
 	cfg.STT.AuthPath = "relative"
 	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
 		t.Fatal("relative path should fail")
+	}
+}
+
+func TestReadAuthFileStaysInSandboxHome(t *testing.T) {
+	r, cfg, chat, _ := testRig(t)
+	path, err := cfg.AuthFile(chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "auth.json"), []byte(`{"https://auth.x.ai::x":{"key":"host"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "auth.json"), path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
+		t.Fatal("auth.json symlinked out of the home should fail")
+	}
+	grokDir := filepath.Dir(path)
+	if err := os.RemoveAll(grokDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, grokDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
+		t.Fatal(".grok symlinked out of the home should fail")
+	}
+	if err := os.Remove(grokDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
+		t.Fatal("a directory at auth.json should fail")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReadAuthFile(context.Background(), cfg, chat); err == nil {
+		t.Fatal("a FIFO at auth.json should fail")
 	}
 }
 

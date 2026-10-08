@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/timbze/kerfline/internal/config"
@@ -128,16 +130,47 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, chat config.Chat, 
 	return res, nil
 }
 
+// maxAuthFile caps how much of auth.json the host reads.
+const maxAuthFile = 1 << 20
+
 // ReadAuthFile reads this chat's Grok auth.json from the host sandbox home.
+// Grok can write that home, so the read stays inside it: a symlink that
+// points out of the home fails, and so does anything but a regular file.
 func (r *Runner) ReadAuthFile(_ context.Context, cfg *config.Config, chat config.Chat) ([]byte, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
+	}
+	home, err := cfg.SandboxHome(chat)
+	if err != nil {
+		return nil, err
 	}
 	path, err := cfg.AuthFile(chat)
 	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(path)
+	rel, err := filepath.Rel(home, path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	// O_NONBLOCK so a FIFO planted at the path cannot hang the open.
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(io.LimitReader(f, maxAuthFile))
 }
 
 func (r *Runner) RefreshGrokAuth(ctx context.Context, cfg *config.Config, chat config.Chat) error {
@@ -374,10 +407,28 @@ func (r *Runner) readonlyPaths(cfg *config.Config, home string) ([]string, error
 		}
 		ro = append(ro, p)
 	}
+	stateRoot, err := cfg.SandboxRoot()
+	if err != nil {
+		return nil, err
+	}
+	stateRoot = resolvePath(stateRoot)
+	hostGrok := ""
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		hostGrok = resolvePath(filepath.Join(h, ".grok"))
+	}
 	for _, p := range cfg.MXC.ReadonlyPaths {
 		p = filepath.Clean(p)
 		if p == home || strings.HasPrefix(p, home+string(filepath.Separator)) {
 			continue
+		}
+		// A parent of the state root would show every chat's auth.json to
+		// every sandbox. A parent of ~/.grok would show the host login.
+		resolved := resolvePath(p)
+		if within(stateRoot, resolved) || within(resolved, stateRoot) {
+			return nil, fmt.Errorf("mxc.readonly_paths: %s overlaps the sandbox state dir %s", p, stateRoot)
+		}
+		if hostGrok != "" && within(resolved, hostGrok) {
+			return nil, fmt.Errorf("mxc.readonly_paths: %s contains %s", p, hostGrok)
 		}
 		if err := refuseAuthDir(p); err != nil {
 			return nil, fmt.Errorf("mxc.readonly_paths: %w", err)
@@ -385,6 +436,24 @@ func (r *Runner) readonlyPaths(cfg *config.Config, home string) ([]string, error
 		ro = append(ro, p)
 	}
 	return dedupe(ro), nil
+}
+
+// resolvePath follows symlinks when p exists, so a link cannot hide what
+// it mounts. A missing path is only cleaned.
+func resolvePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
+}
+
+// within reports whether p is dir or sits below it.
+func within(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func refuseAuthDir(dir string) error {
