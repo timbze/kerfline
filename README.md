@@ -44,7 +44,7 @@ What that split buys you:
 
 - **Linux** host with user namespaces and [Bubblewrap](https://github.com/containers/bubblewrap) 0.5.0+ (`bwrap`)
 - **`lxc-exec`** from [MXC](https://github.com/microsoft/mxc) 1.0.0 on `PATH` (the Linux executor; the npm package `@microsoft/mxc-sdk` ships it under `bin/x64/` or `bin/arm64/`)
-- **`slirp4netns`**, `iptables` (nft backend), and `nsenter`, so outbound network can be allowed without sharing the host network namespace
+- **`slirp4netns`**, `iptables` (nft backend), `nsenter`, and `unshare`, so outbound network can be allowed without sharing the host network namespace. Grok is a static musl binary and reads `/etc/resolv.conf` directly. When that file is systemd-resolved's `127.0.0.53` stub, Kerfline binds resolved's uplink `resolv.conf` over it in a private mount namespace before `lxc-exec`.
 - **Grok** on the host `PATH`: SuperGrok device login per chat, or `XAI_API_KEY`. Kerfline follows symlinks and mounts the resolved binary's directory read-only. A version-manager shim that points at another program is refused; set `mxc.grok_bin` to the grok executable.
 - **Go 1.24+** to build
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)

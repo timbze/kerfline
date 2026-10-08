@@ -33,6 +33,8 @@ type Request struct {
 type Runner struct {
 	LookPath func(string) (string, error)
 	Command  func(ctx context.Context, name string, args ...string) *exec.Cmd
+	// resolvFile overrides /etc/resolv.conf when tests need a fixture.
+	resolvFile string
 }
 
 func New() *Runner {
@@ -256,7 +258,28 @@ func (r *Runner) command(ctx context.Context, cfg *config.Config, chat config.Ch
 		cleanup()
 		return nil, home, noop, fmt.Errorf("find %s: %w", cfg.MXC.Binary, err)
 	}
-	cmd := r.Command(ctx, bin, "--config", f.Name())
+	src, dst, ok, err := r.sandboxResolv()
+	if err != nil {
+		cleanup()
+		return nil, home, noop, err
+	}
+	if !ok {
+		cmd := r.Command(ctx, bin, "--config", f.Name())
+		return cmd, home, cleanup, nil
+	}
+	unshare, err := r.LookPath("unshare")
+	if err != nil {
+		cleanup()
+		return nil, home, noop, fmt.Errorf("find unshare: %w", err)
+	}
+	// unshare's mount namespace is private to this process, so the bind
+	// does not change the host's resolver. lxc-exec then bind-mounts the
+	// stub's directory into the sandbox and the workload sees src.
+	cmd := r.Command(ctx, unshare,
+		"--user", "--map-root-user", "--mount", "--propagation", "private",
+		"--", "sh", "-c", sandboxResolvScript,
+		"sh", src, dst, bin, f.Name(),
+	)
 	return cmd, home, cleanup, nil
 }
 

@@ -37,6 +37,11 @@ func testRig(t *testing.T) (*Runner, *config.Config, config.Chat, string) {
 	chat := config.Chat{Name: "notes", Workspace: t.TempDir()}
 	r := New()
 	r.LookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	resolv := filepath.Join(root, "resolv.conf")
+	if err := os.WriteFile(resolv, []byte("nameserver 1.1.1.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.resolvFile = resolv
 	return r, cfg, chat, install
 }
 
