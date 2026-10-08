@@ -9,11 +9,11 @@ func TestExplicitlyAddressed(t *testing.T) {
 		user string
 		want bool
 	}{
-		{name: "ask with prompt", text: "/ask buy milk", user: "notesbot", want: true},
-		{name: "ask at bot with prompt", text: "/ask@notesbot buy milk", user: "notesbot", want: true},
+		{name: "ask with prompt", text: "/kerf buy milk", user: "notesbot", want: true},
+		{name: "ask at bot with prompt", text: "/kerf@notesbot buy milk", user: "notesbot", want: true},
 		{name: "mention with prompt", text: "@notesbot add eggs", user: "notesbot", want: true},
 		{name: "mention suffix", text: "add eggs @notesbot", user: "notesbot", want: true},
-		{name: "empty ask", text: "/ask", user: "notesbot", want: false},
+		{name: "empty ask", text: "/kerf", user: "notesbot", want: false},
 		{name: "bare mention", text: "@notesbot", user: "notesbot", want: false},
 		{name: "vocative only", text: "hey kerf save this", user: "notesbot", want: false},
 		{name: "name mid sentence", text: "the grok model is slow", user: "notesbot", want: false},
@@ -44,7 +44,7 @@ func TestVocative(t *testing.T) {
 		{name: "hei kerfline", text: "hei kerfline, ping", want: true},
 		{name: "case insensitive", text: "Hey Kerf do it", want: true},
 		{name: "name mid sentence", text: "the grok model is slow", want: false},
-		{name: "ask command", text: "/ask buy milk", want: false},
+		{name: "ask command", text: "/kerf buy milk", want: false},
 		{name: "greeting only", text: "hey there", want: false},
 		{name: "empty", text: "  ", want: false},
 		{name: "not addressed", text: "save this", want: false},

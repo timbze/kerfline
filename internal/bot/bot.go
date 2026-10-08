@@ -90,6 +90,7 @@ func (b *Bot) Run(ctx context.Context, tg *gotgbot.Bot) error {
 	if err := b.resolveChats(ctx); err != nil {
 		return err
 	}
+	b.publishCommands(tg)
 
 	if b.cfg.UseWebhook() {
 		return b.runWebhook(ctx, tg)
@@ -134,6 +135,21 @@ func (b *Bot) resolveChats(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// botCommands is the menu Telegram shows when the user types "/" or taps the
+// commands button.
+var botCommands = []gotgbot.BotCommand{
+	{Command: kerfCommand, Description: "Ask Kerf: /kerf <what you want>"},
+	{Command: "chatid", Description: "Print this chat's id for config"},
+}
+
+// publishCommands registers botCommands with Telegram. A failure only costs
+// the menu, so it is logged and startup goes on.
+func (b *Bot) publishCommands(tg *gotgbot.Bot) {
+	if _, err := tg.SetMyCommands(botCommands, nil); err != nil {
+		b.log.Warn("set bot commands", "err", err)
+	}
 }
 
 func pollReason(cfg *config.Config) string {
@@ -249,7 +265,7 @@ func (b *Bot) watchGetUpdates(ctx context.Context, c *TelegramClient, stale chan
 
 func (b *Bot) onStart(tg *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
-	text := "I only answer in allowlisted chats, with /ask or an @mention (unless that chat is a DM).\nUse /chatid to print this chat's id for config."
+	text := "I only answer in allowlisted chats, with /kerf or an @mention (unless that chat is a DM).\nUse /chatid to print this chat's id for config."
 	_, err := msg.Reply(tg, text, replyOpts(msg))
 	return err
 }

@@ -16,9 +16,9 @@ func TestPromptFromMessage(t *testing.T) {
 		want    string
 		wantOK  bool
 	}{
-		{name: "ask", text: "/ask what is for dinner", user: "notesbot", require: true, want: "what is for dinner", wantOK: true},
-		{name: "ask at bot", text: "/ask@notesbot buy milk", user: "notesbot", require: true, want: "buy milk", wantOK: true},
-		{name: "ask empty", text: "/ask", user: "notesbot", require: true, wantOK: false},
+		{name: "ask", text: "/kerf what is for dinner", user: "notesbot", require: true, want: "what is for dinner", wantOK: true},
+		{name: "ask at bot", text: "/kerf@notesbot buy milk", user: "notesbot", require: true, want: "buy milk", wantOK: true},
+		{name: "ask empty", text: "/kerf", user: "notesbot", require: true, wantOK: false},
 		{name: "other command", text: "/start", user: "notesbot", require: true, wantOK: false},
 		{name: "mention prefix", text: "@notesbot add eggs to the list", user: "notesbot", require: true, want: "add eggs to the list", wantOK: true},
 		{name: "mention suffix", text: "add eggs @notesbot", user: "notesbot", require: true, want: "add eggs", wantOK: true},
@@ -68,7 +68,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 	}{
 		{
 			name:    "no reply",
-			msg:     &gotgbot.Message{Text: "/ask what is for dinner"},
+			msg:     &gotgbot.Message{Text: "/kerf what is for dinner"},
 			require: true,
 			wantOK:  true,
 			exact:   "what is for dinner",
@@ -76,7 +76,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "reply with ask",
 			msg: &gotgbot.Message{
-				Text:           "/ask what does this mean?",
+				Text:           "/kerf what does this mean?",
 				ReplyToMessage: origText,
 			},
 			require: true,
@@ -91,7 +91,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "manual quote",
 			msg: &gotgbot.Message{
-				Text:           "/ask explain",
+				Text:           "/kerf explain",
 				ReplyToMessage: origText,
 				Quote:          &gotgbot.TextQuote{Text: "180", IsManual: true},
 			},
@@ -102,7 +102,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "auto quote omitted",
 			msg: &gotgbot.Message{
-				Text:           "/ask explain",
+				Text:           "/kerf explain",
 				ReplyToMessage: origText,
 				Quote:          &gotgbot.TextQuote{Text: "180", IsManual: false},
 			},
@@ -114,7 +114,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "forum topic created skipped",
 			msg: &gotgbot.Message{
-				Text:           "/ask what is this",
+				Text:           "/kerf what is this",
 				ReplyToMessage: forum,
 			},
 			require: true,
@@ -124,7 +124,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "empty ask with reply",
 			msg: &gotgbot.Message{
-				Text:           "/ask",
+				Text:           "/kerf",
 				ReplyToMessage: origText,
 			},
 			require: true,
@@ -144,7 +144,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		},
 		{
 			name:    "empty ask no reply",
-			msg:     &gotgbot.Message{Text: "/ask"},
+			msg:     &gotgbot.Message{Text: "/kerf"},
 			require: true,
 			wantOK:  false,
 		},
@@ -160,7 +160,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "photo caption",
 			msg: &gotgbot.Message{
-				Text:           "/ask what is this",
+				Text:           "/kerf what is this",
 				ReplyToMessage: photoCaption,
 			},
 			require: true,
@@ -170,7 +170,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "bot rich reply",
 			msg: &gotgbot.Message{
-				Text:           "/ask shorten that",
+				Text:           "/kerf shorten that",
 				ReplyToMessage: botOrig,
 			},
 			require: true,
@@ -190,7 +190,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "captioned photo ask group",
 			msg: &gotgbot.Message{
-				Caption: "/ask save this",
+				Caption: "/kerf save this",
 				Photo:   []gotgbot.PhotoSize{{FileId: "x", Width: 1280, Height: 960}},
 			},
 			require: true,
@@ -200,7 +200,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "captioned photo ask dm",
 			msg: &gotgbot.Message{
-				Caption: "/ask save this",
+				Caption: "/kerf save this",
 				Photo:   []gotgbot.PhotoSize{{FileId: "x"}},
 			},
 			require: false,
@@ -216,7 +216,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "document caption ask",
 			msg: &gotgbot.Message{
-				Caption:  "/ask file this",
+				Caption:  "/kerf file this",
 				Document: &gotgbot.Document{FileName: "x.pdf", MimeType: "application/pdf"},
 			},
 			require: true,
@@ -226,7 +226,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "empty ask with reply to photo",
 			msg: &gotgbot.Message{
-				Text: "/ask",
+				Text: "/kerf",
 				ReplyToMessage: &gotgbot.Message{
 					From:  fromUser,
 					Photo: []gotgbot.PhotoSize{{FileId: "x", Width: 10, Height: 10}},
@@ -240,7 +240,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "empty ask caption on photo with text reply-to",
 			msg: &gotgbot.Message{
-				Caption:        "/ask",
+				Caption:        "/kerf",
 				Photo:          []gotgbot.PhotoSize{{FileId: "x"}},
 				ReplyToMessage: origText,
 			},
@@ -267,7 +267,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "captioned voice ask",
 			msg: &gotgbot.Message{
-				Caption: "/ask save this",
+				Caption: "/kerf save this",
 				Voice:   &gotgbot.Voice{FileId: "v", Duration: 12},
 			},
 			require: true,
@@ -277,7 +277,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "reply to voice with ask",
 			msg: &gotgbot.Message{
-				Text: "/ask what did they say",
+				Text: "/kerf what did they say",
 				ReplyToMessage: &gotgbot.Message{
 					From:  fromUser,
 					Voice: &gotgbot.Voice{FileId: "v", Duration: 12},
@@ -290,7 +290,7 @@ func TestBuildGrokPrompt(t *testing.T) {
 		{
 			name: "empty ask with reply to voice",
 			msg: &gotgbot.Message{
-				Text: "/ask",
+				Text: "/kerf",
 				ReplyToMessage: &gotgbot.Message{
 					From:  fromUser,
 					Voice: &gotgbot.Voice{FileId: "v"},

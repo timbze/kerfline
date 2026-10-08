@@ -116,7 +116,7 @@ func ShouldReply(ctx context.Context, c *Client, in Input) (Verdict, error) {
 }
 
 // ChooseEffort picks the reply's reasoning level for a message the bot will
-// answer regardless (explicit mention, /ask). With fewer than two levels it
+// answer regardless (explicit mention, /kerf). With fewer than two levels it
 // returns the only level, or "", without calling the API.
 func ChooseEffort(ctx context.Context, c *Client, in Input) (string, error) {
 	if c == nil {

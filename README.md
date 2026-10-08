@@ -164,10 +164,14 @@ where) — a different file, in the other repo.
 ```
 
 Start the bot in Telegram, DM `/chatid`, paste that id into
-`telegram_chat_id`, restart. Then `/ask ping` — or just talk, in a DM.
+`telegram_chat_id`, restart. Then `/kerf ping` — or just talk, in a DM.
+
+On startup the bot registers `/kerf` and `/chatid` with Telegram, so they show
+up in the `/` command menu. Tapping a command there sends it at once; to add
+text after `/kerf`, press Tab on desktop or long-press it on mobile.
 
 In a group, add the bot, `/chatid`, and keep `require_mention = true` unless
-you want the reply gate on every line. In a forum group, `/ask` replies stay
+you want the reply gate on every line. In a forum group, `/kerf` replies stay
 in the topic they were written in; `/chatid` prints `topic_id` when you run
 it inside a topic.
 
@@ -175,14 +179,14 @@ it inside a topic.
 
 ### Who gets a Grok turn
 
-- **Groups that only want `/ask` or `@bot`:** keep `require_mention = true`.
+- **Groups that only want `/kerf` or `@bot`:** keep `require_mention = true`.
 - **Groups that want “hey kerf / hey grok / clearly workspace data”:** set
   `require_mention = false` so every non-empty line reaches Kerfline. A cheap
   gate decides whether to run a full Grok turn. No typing indicator and no
   Telegram reply when the gate says skip.
 - **DMs:** `require_mention = false`. The same gate applies unless
   `[grok].gate = false`, which restores always-on full turns.
-- **Explicit `/ask` and `@botusername`:** skip the gate (typing + full turn).
+- **Explicit `/kerf` and `@botusername`:** skip the gate (typing + full turn).
 - **Informational drops:** if Grok files workspace data and has nothing to
   say, it prints only `👍`. Kerfline sets a thumbs-up reaction on that
   message instead of a chat reply. A trailing `👍` after leftover chatter is
@@ -199,7 +203,7 @@ request for models that do not accept `none`.
 `[grok].reasoning_levels` lists the `--reasoning-effort` values the full Grok
 turn may run at: `low` | `medium` | `high` | `xhigh`, the values grok
 accepts. With two or more, the gate also picks a level per message: the
-lowest one it thinks will do the job. `/ask`, `@bot`, and “hey kerf” messages skip the reply decision
+lowest one it thinks will do the job. `/kerf`, `@bot`, and “hey kerf” messages skip the reply decision
 but still get a short effort-only gate call, made after the typing indicator
 starts. With `gate = false`, every answered message gets that effort-only
 call. With one level, that level is always used and no call is made. Leave
@@ -215,8 +219,8 @@ Kerfline files Telegram photos and documents into the chat’s git workspace.
 It classifies the caption or reply **from the text first**, then decides
 whether Grok should see the pixels.
 
-- Caption a photo with `/ask save this …`, or send the photo first and
-  **reply** to it with `/ask …` (or unadorned text in a DM).
+- Caption a photo with `/kerf save this …`, or send the photo first and
+  **reply** to it with `/kerf …` (or unadorned text in a DM).
 - The host downloads the file into gitignored `.local/telegram-inbox/` and
   Grok `cp`s that handle to a dest from the **workspace** `AGENTS.md`. Inbox
   `Read`/`Grep` is denied either way.
@@ -232,8 +236,8 @@ whether Grok should see the pixels.
 - Telegram **photos** are compressed JPEGs. For an archival scan, send it as
   a **document**.
 
-Voice notes and audio: caption `/ask …`, or **reply** to the clip with
-`/ask …` (or unadorned text in a DM). In chats with `require_mention = false`,
+Voice notes and audio: caption `/kerf …`, or **reply** to the clip with
+`/kerf …` (or unadorned text in a DM). In chats with `require_mention = false`,
 a clip at or under `gate_speech_max` (default two minutes) is transcribed and
 sent through the reply gate even with no caption; if the gate says reply,
 that same transcript is reused for the Grok turn (no second STT). Longer

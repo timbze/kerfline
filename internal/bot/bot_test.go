@@ -468,7 +468,7 @@ func TestOrchestrateGateDoesNotRunWhenRequireMention(t *testing.T) {
 	b := silentBot(t, g)
 	exec := &recordingExec{}
 	chat := config.Chat{Name: "notes", RequireMention: true}
-	err := b.orchestrate(context.Background(), chat, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	err := b.orchestrate(context.Background(), chat, groupMsg("/kerf buy milk"), "buy milk", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestOrchestrateGateDoesNotRunWhenExplicitlyAddressed(t *testing.T) {
 		text   string
 		prompt string
 	}{
-		{name: "ask", text: "/ask buy milk", prompt: "buy milk"},
+		{name: "ask", text: "/kerf buy milk", prompt: "buy milk"},
 		{name: "mention", text: "@notesbot add eggs", prompt: "add eggs"},
 	}
 	for _, tc := range cases {
@@ -527,7 +527,7 @@ func TestOrchestrateBareAskBypassesGate(t *testing.T) {
 	b := silentBot(t, g)
 	exec := &recordingExec{}
 	chat := config.Chat{Name: "notes"}
-	err := b.orchestrate(context.Background(), chat, groupMsg("/ask"), "quoted body", "notesbot", exec)
+	err := b.orchestrate(context.Background(), chat, groupMsg("/kerf"), "quoted body", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +577,7 @@ func TestOrchestrateAskPhotoTypesBeforeDownload(t *testing.T) {
 	exec := &recordingExec{}
 	chat := config.Chat{Name: "notes"}
 	msg := &gotgbot.Message{
-		Caption: "/ask what is this",
+		Caption: "/kerf what is this",
 		Photo:   []gotgbot.PhotoSize{{FileId: "fid", FileUniqueId: "uid"}},
 		From:    &gotgbot.User{Id: 42},
 		Chat:    gotgbot.Chat{Id: -1001, Type: gotgbot.ChatTypeGroup},
@@ -587,7 +587,7 @@ func TestOrchestrateAskPhotoTypesBeforeDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if g.called != 0 {
-		t.Fatalf("gate ran for /ask photo: %d", g.called)
+		t.Fatalf("gate ran for /kerf photo: %d", g.called)
 	}
 	assertEvents(t, exec.events, []string{"typing", "download", "run"})
 }
@@ -639,7 +639,7 @@ func TestOrchestrateExplicitAskPicksEffortAfterTyping(t *testing.T) {
 	b := levelsBot(t, g, "low", "medium", "high")
 	exec := &recordingExec{}
 	g.exec = exec
-	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask plan the move"), "plan the move", "notesbot", exec)
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/kerf plan the move"), "plan the move", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +656,7 @@ func TestOrchestrateNoLevelsNoEffort(t *testing.T) {
 	g := &stubGater{d: gate.Skip, pick: "high"}
 	b := silentBot(t, g)
 	exec := &recordingExec{}
-	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/kerf buy milk"), "buy milk", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,7 +670,7 @@ func TestOrchestrateOneLevelNoCall(t *testing.T) {
 	b := silentBot(t, g)
 	b.cfg.Grok.ReasoningLevels = []string{"high"}
 	exec := &recordingExec{}
-	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/kerf buy milk"), "buy milk", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -713,7 +713,7 @@ func TestOrchestrateEffortErrorUsesDefault(t *testing.T) {
 	g := &stubGater{pickErr: errors.New("http 500")}
 	b := levelsBot(t, g, "low", "medium", "high")
 	exec := &recordingExec{}
-	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/ask buy milk"), "buy milk", "notesbot", exec)
+	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, groupMsg("/kerf buy milk"), "buy milk", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +769,7 @@ func TestReplyGateEffortSendsChatLevels(t *testing.T) {
 	g := &replyGate{bot: b}
 	chat := config.Chat{Name: "notes", Workspace: t.TempDir(), ReasoningLevels: []string{"high", "xhigh"}}
 	msg := &gotgbot.Message{
-		Caption:  "/ask what does this say",
+		Caption:  "/kerf what does this say",
 		Document: &gotgbot.Document{FileId: "d", FileUniqueId: "u", MimeType: "application/pdf"},
 		From:     &gotgbot.User{Id: 42},
 		Chat:     gotgbot.Chat{Id: -1001, Type: gotgbot.ChatTypeGroup},
@@ -1018,8 +1018,8 @@ func TestGateShortSpeech(t *testing.T) {
 	if gateShortSpeech(cfg, config.Chat{RequireMention: true}, voiceMsg(30, ""), "notesbot") {
 		t.Fatal("require_mention skips gate speech")
 	}
-	if gateShortSpeech(cfg, chat, voiceMsg(30, "/ask save this"), "notesbot") {
-		t.Fatal("/ask voice bypasses the gate, so no pre-gate STT")
+	if gateShortSpeech(cfg, chat, voiceMsg(30, "/kerf save this"), "notesbot") {
+		t.Fatal("/kerf voice bypasses the gate, so no pre-gate STT")
 	}
 	off := false
 	cfg.Grok.Gate = &off
@@ -1098,13 +1098,13 @@ func TestOrchestrateAskVoiceNoSpeechPrep(t *testing.T) {
 	g := &stubGater{d: gate.Skip}
 	b := silentBot(t, g)
 	exec := &recordingExec{}
-	msg := voiceMsg(30, "/ask save this")
+	msg := voiceMsg(30, "/kerf save this")
 	err := b.orchestrate(context.Background(), config.Chat{Name: "notes"}, msg, "save this", "notesbot", exec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if g.called != 0 {
-		t.Fatalf("gate ran for /ask voice: %d", g.called)
+		t.Fatalf("gate ran for /kerf voice: %d", g.called)
 	}
 	assertEvents(t, exec.events, []string{"typing", "download", "run"})
 }
