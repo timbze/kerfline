@@ -138,10 +138,10 @@ func (b *Bot) resolveChats(ctx context.Context) error {
 }
 
 // botCommands is the menu Telegram shows when the user types "/" or taps the
-// commands button.
+// commands button. /chatid is a setup tool, so it still works but stays off
+// the menu.
 var botCommands = []gotgbot.BotCommand{
 	{Command: kerfCommand, Description: "Ask Kerf: /kerf <what you want>"},
-	{Command: "chatid", Description: "Print this chat's id for config"},
 }
 
 // publishCommands registers botCommands with Telegram. A failure only costs
